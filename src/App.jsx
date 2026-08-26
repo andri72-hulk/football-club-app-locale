@@ -4850,7 +4850,6 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
         <Button
           onClick={() => {
             setEditing(emptyExercise());
-            setEditingSource(null);
             setShowForm(true);
           }}
         >
