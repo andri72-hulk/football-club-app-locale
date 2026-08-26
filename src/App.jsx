@@ -1525,7 +1525,10 @@ function Button({ children, variant = "primary", className = "", ...props }) {
 
 function Modal({ open, onClose, title, children, wide = false, size }) {
   if (!open) return null;
-  const widthClass = size === "xl" ? "sm:max-w-5xl" : wide ? "sm:max-w-3xl" : "sm:max-w-lg";
+  // "xl" usa una percentuale della larghezza dello schermo (non una larghezza
+  // fissa) così su monitor larghi la finestra si allarga di conseguenza,
+  // invece di lasciare grandi margini vuoti ai lati.
+  const widthClass = size === "xl" ? "sm:w-[92vw] sm:max-w-[1600px]" : wide ? "sm:max-w-3xl" : "sm:max-w-lg";
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-start justify-center bg-black/70 backdrop-blur-sm p-0">
       <div
