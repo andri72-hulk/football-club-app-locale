@@ -4015,6 +4015,21 @@ function TrainingsSection({ season, updateSeason, library, updateLibrary, showTo
     showToast("Esercizio eliminato dal Focus Tecnico");
   }
 
+  // Usati dal PlayBook: aggiungere un esercizio a un Focus già esistente
+  // (se ha ancora spazio libero, max 6) oppure crearne uno nuovo al volo.
+  function addExerciseToFocus(focusId, ex) {
+    const target = focusTecnici.find((f) => f.id === focusId);
+    if (!target || (target.exercises || []).length >= 6) return;
+    saveFocusTecnico({ ...target, exercises: [...(target.exercises || []), { ...ex, id: uid("ex"), sourceExerciseId: ex.id }] });
+    showToast(`Aggiunto a "${target.title}"`);
+  }
+
+  function createFocusWithExercise(ex) {
+    const newFocus = { ...emptyFocusTecnico(), title: ex.title || "Nuovo Focus", exercises: [{ ...ex, id: uid("ex"), sourceExerciseId: ex.id }] };
+    saveFocusTecnico(newFocus);
+    showToast(`Nuovo Focus "${newFocus.title}" creato — rinominalo da Focus Tecnici se vuoi`);
+  }
+
   return (
     <div>
       <SectionTitle
@@ -4040,11 +4055,12 @@ function TrainingsSection({ season, updateSeason, library, updateLibrary, showTo
         }
       />
 
-      <div className="flex gap-2 mb-5">
+      <div className="flex gap-2 mb-5 flex-wrap">
         {[
           { id: "sessioni", label: "Sessioni" },
           { id: "focus", label: "Focus Tecnici" },
           { id: "esercizi", label: "Esercizi" },
+          { id: "playbook", label: "PlayBook" },
         ].map((t) => (
           <button
             key={t.id}
@@ -4058,7 +4074,16 @@ function TrainingsSection({ season, updateSeason, library, updateLibrary, showTo
         ))}
       </div>
 
-      {subTab === "focus" ? (
+      {subTab === "playbook" ? (
+        <PlayBookSection
+          exercises={library.exercises || []}
+          focusTecnici={focusTecnici}
+          onSaveExercise={saveExercise}
+          onAddToFocus={addExerciseToFocus}
+          onCreateFocus={createFocusWithExercise}
+          showToast={showToast}
+        />
+      ) : subTab === "focus" ? (
         <FocusTecniciSection
           focusTecnici={focusTecnici}
           onSave={saveFocusTecnico}
@@ -4339,6 +4364,256 @@ function FocusTecniciSection({ focusTecnici, onSave, onDelete, exercises, onSave
       )}
 
       {lightboxSrc && <ImageLightbox src={lightboxSrc} alt="Esercizio" onClose={() => setLightboxSrc(null)} />}
+    </div>
+  );
+}
+
+/* ============================================================
+   PLAYBOOK — catalogo di tutti gli esercizi, con vista "esplosa"
+   simile a quella del Focus Tecnico, filtrabile per tipo/categoria
+   ============================================================ */
+
+function PlayBookSection({ exercises, focusTecnici, onSaveExercise, onAddToFocus, onCreateFocus, showToast }) {
+  const config = useConfig();
+  const [typeFilter, setTypeFilter] = useState("Tutti");
+  const [categoryFilter, setCategoryFilter] = useState("Tutte");
+  const [viewerIndex, setViewerIndex] = useState(null);
+
+  const allTypesPresent = [
+    "ND",
+    ...Array.from(new Set([...config.exerciseTypes, ...(exercises || []).map((ex) => ex.type).filter(Boolean)])),
+  ];
+  const allCategoriesPresent = Array.from(
+    new Set([...(config.categories || []), ...(exercises || []).map((ex) => ex.category).filter(Boolean)])
+  );
+
+  const filtered = (exercises || []).filter((ex) => {
+    const matchesType = typeFilter === "Tutti" || (ex.type || "ND") === typeFilter;
+    const matchesCategory = categoryFilter === "Tutte" || (categoryFilter === "ND" ? !ex.category : ex.category === categoryFilter);
+    return matchesType && matchesCategory;
+  });
+
+  const grouped = allTypesPresent
+    .map((type) => ({ type, items: filtered.filter((ex) => (ex.type || "ND") === type) }))
+    .filter((g) => g.items.length > 0);
+
+  return (
+    <div>
+      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">
+        PlayBook — catalogo completo ({filtered.length} esercizi)
+      </p>
+
+      <div className="flex flex-wrap items-center gap-1.5 mb-2">
+        {["Tutti", ...allTypesPresent].map((t) => (
+          <button
+            key={t}
+            onClick={() => setTypeFilter(t)}
+            className={`shrink-0 rounded-full px-3.5 py-1.5 text-[11px] font-medium border transition-colors ${
+              typeFilter === t ? "bg-emerald-500 text-slate-950 border-emerald-500" : "border-white/10 text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5 mb-5">
+        {["Tutte", "ND", ...allCategoriesPresent].map((c) => (
+          <button
+            key={c}
+            onClick={() => setCategoryFilter(c)}
+            className={`shrink-0 rounded-full px-3.5 py-1.5 text-[11px] font-medium border transition-colors ${
+              categoryFilter === c ? "bg-sky-500 text-slate-950 border-sky-500" : "border-white/10 text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            {c}
+          </button>
+        ))}
+      </div>
+
+      {grouped.length === 0 ? (
+        <EmptyState icon={Target} text="Nessun esercizio trovato per questi filtri." />
+      ) : (
+        <div className="space-y-6">
+          {grouped.map((g) => (
+            <div key={g.type}>
+              <div className="flex items-center gap-2 mb-2.5">
+                <Badge className={EXERCISE_TYPE_STYLES[g.type] || NEUTRAL_BADGE}>{g.type}</Badge>
+                <span className="text-xs text-slate-500">({g.items.length})</span>
+              </div>
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {g.items.map((ex) => (
+                  <button
+                    key={ex.id}
+                    onClick={() => setViewerIndex(filtered.indexOf(ex))}
+                    className="flex items-center gap-2.5 rounded-xl border border-white/10 p-2 text-left hover:bg-white/5"
+                  >
+                    {ex.image ? (
+                      <img src={ex.thumbnail || ex.image} alt={ex.title} className="w-11 h-11 object-cover rounded-lg shrink-0" />
+                    ) : (
+                      <div className="w-11 h-11 rounded-lg bg-white/5 shrink-0 flex items-center justify-center">
+                        <Target className="w-4 h-4 text-slate-600" />
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-slate-200 truncate">{ex.title}</p>
+                      <p className="text-[11px] text-slate-500">{ex.time || "--"}{ex.category ? ` · ${ex.category}` : ""}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {viewerIndex !== null && filtered[viewerIndex] && (
+        <PlayBookViewer
+          exercises={filtered}
+          index={viewerIndex}
+          onIndexChange={setViewerIndex}
+          onClose={() => setViewerIndex(null)}
+          onSaveExercise={onSaveExercise}
+          focusTecnici={focusTecnici}
+          onAddToFocus={onAddToFocus}
+          onCreateFocus={onCreateFocus}
+          showToast={showToast}
+        />
+      )}
+    </div>
+  );
+}
+
+// Vista esplosa del PlayBook: un esercizio alla volta, immagine grande,
+// navigazione avanti/indietro nell'insieme filtrato, con azioni rapide per
+// modificare l'esercizio o aggiungerlo a un Focus Tecnico (esistente o nuovo).
+function PlayBookViewer({ exercises, index, onIndexChange, onClose, onSaveExercise, focusTecnici, onAddToFocus, onCreateFocus, showToast }) {
+  const [showEdit, setShowEdit] = useState(false);
+  const [showAddToFocus, setShowAddToFocus] = useState(false);
+  const current = exercises[index];
+  if (!current) return null;
+
+  function goTo(delta) {
+    const next = index + delta;
+    if (next < 0 || next >= exercises.length) return;
+    onIndexChange(next);
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/95 flex flex-col" style={{ zIndex: 100 }}>
+      <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-white/10 flex-wrap">
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-white truncate">{current.type || "Esercizio"}</p>
+          <p className="text-[11px] text-slate-400">Esercizio {index + 1} di {exercises.length}</p>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={() =>
+              shareOrFallback({
+                dataUrl: current.image,
+                filename: `${(current.title || "esercizio").replace(/[^a-z0-9]+/gi, "-")}.jpg`,
+                label: current.title,
+                showToast,
+              })
+            }
+            disabled={!current.image}
+            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white disabled:opacity-30"
+            title="Condividi immagine"
+          >
+            <Share2 className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Condividi</span>
+          </button>
+          <button onClick={() => downloadExerciseSheet(current)} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white" title="Scarica scheda">
+            <Download className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Scarica</span>
+          </button>
+          <button onClick={() => setShowAddToFocus(true)} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white" title="Aggiungi a un Focus Tecnico">
+            <Plus className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Aggiungi a Focus</span>
+          </button>
+          <button onClick={() => setShowEdit(true)} className="rounded-lg p-2 hover:bg-white/10 text-white" title="Modifica esercizio">
+            <Edit2 className="w-4 h-4" />
+          </button>
+          <button onClick={onClose} className="rounded-lg p-2 hover:bg-white/10 text-white">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 flex items-center justify-center relative px-4 min-h-0">
+        {index > 0 && (
+          <button onClick={() => goTo(-1)} className="absolute left-2 sm:left-4 rounded-full p-2 bg-white/10 hover:bg-white/20 text-white z-10">
+            <ChevronLeft className="w-6 h-6" />
+          </button>
+        )}
+        <div className="max-w-3xl w-full flex flex-col items-center gap-2.5 py-3 overflow-y-auto" style={{ maxHeight: "100%" }}>
+          {current.image ? (
+            <img src={current.image} alt={current.title} className="max-w-full object-contain rounded-lg" style={{ maxHeight: "52vh" }} />
+          ) : (
+            <div className="w-full aspect-video rounded-lg bg-white/5 flex items-center justify-center text-slate-500 text-sm">
+              Nessuna immagine per questo esercizio
+            </div>
+          )}
+          <div className="w-full text-left px-1">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              {current.type && <Badge className={EXERCISE_TYPE_STYLES[current.type] || EXERCISE_TYPE_STYLES.Tecnica}>{current.type}</Badge>}
+              {current.category && <Badge className="bg-sky-500/15 text-sky-400 border-sky-500/30">{current.category}</Badge>}
+              <p className="text-base font-bold text-white">{current.title || "Esercizio"}</p>
+              <span className="text-xs text-slate-400">· {current.time || "--"}</span>
+            </div>
+            {current.goal && <p className="text-sm text-emerald-400 italic mb-1">Obiettivo: {current.goal}</p>}
+            {current.description && <p className="text-sm text-slate-300">{current.description}</p>}
+          </div>
+        </div>
+        {index < exercises.length - 1 && (
+          <button onClick={() => goTo(1)} className="absolute right-2 sm:right-4 rounded-full p-2 bg-white/10 hover:bg-white/20 text-white z-10">
+            <ChevronRight className="w-6 h-6" />
+          </button>
+        )}
+      </div>
+
+      <Modal open={showEdit} onClose={() => setShowEdit(false)} title="Modifica Esercizio" wide>
+        <ExerciseForm
+          initial={current}
+          onCancel={() => setShowEdit(false)}
+          onSubmit={(updated) => {
+            onSaveExercise(updated);
+            setShowEdit(false);
+          }}
+        />
+      </Modal>
+
+      <Modal open={showAddToFocus} onClose={() => setShowAddToFocus(false)} title="Aggiungi a un Focus Tecnico">
+        <div className="space-y-2">
+          <button
+            onClick={() => {
+              onCreateFocus(current);
+              setShowAddToFocus(false);
+            }}
+            className="w-full flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 px-3 py-2.5 text-sm text-emerald-300 font-medium"
+          >
+            <Plus className="w-4 h-4" /> Crea nuovo Focus con questo esercizio
+          </button>
+          {(focusTecnici || []).length > 0 && (
+            <>
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide pt-2">Oppure aggiungi a un Focus esistente</p>
+              {focusTecnici.map((ft) => {
+                const full = (ft.exercises || []).length >= 6;
+                return (
+                  <button
+                    key={ft.id}
+                    onClick={() => {
+                      onAddToFocus(ft.id, current);
+                      setShowAddToFocus(false);
+                    }}
+                    disabled={full}
+                    className="w-full flex items-center justify-between gap-2 rounded-xl border border-white/10 hover:bg-white/5 px-3 py-2.5 text-sm text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <span className="truncate">{ft.title || "Senza titolo"}</span>
+                    <span className="text-[11px] text-slate-500 shrink-0">{full ? "Pieno (6/6)" : `${(ft.exercises || []).length}/6`}</span>
+                  </button>
+                );
+              })}
+            </>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -4697,9 +4972,21 @@ function FocusTecnicoForm({ initial, onSubmit, onCancel, standaloneExercises, on
 
   return (
     <div>
-      <Field label="Titolo dell'allenamento tipo">
-        <input className={inputClass} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Es. Possesso palla e transizioni" />
-      </Field>
+      <div className="flex items-center justify-between gap-2 mb-4">
+        <h4 className="text-sm font-bold text-slate-100">Titolo dell'allenamento tipo</h4>
+        <div className="flex gap-2 shrink-0">
+          <Button variant="secondary" onClick={onCancel}>Annulla</Button>
+          <Button onClick={() => form.title.trim() && onSubmit(form)}>
+            <Save className="w-4 h-4" /> Salva Focus Tecnico
+          </Button>
+        </div>
+      </div>
+      <input
+        className={inputClass + " mb-4"}
+        value={form.title}
+        onChange={(e) => setForm({ ...form, title: e.target.value })}
+        placeholder="Es. Possesso palla e transizioni"
+      />
 
       {form.exercises.length > 0 && (
         <div className="mb-4">
@@ -4756,7 +5043,7 @@ function FocusTecnicoForm({ initial, onSubmit, onCancel, standaloneExercises, on
           className={inputClass + " pl-9"}
         />
       </div>
-      <div className="flex items-center gap-1.5 mb-3 overflow-x-auto pb-1">
+      <div className="flex flex-wrap items-center gap-1.5 mb-3">
         {["Tutti", ...config.exerciseTypes].map((t) => (
           <button
             key={t}
@@ -4804,13 +5091,6 @@ function FocusTecnicoForm({ initial, onSubmit, onCancel, standaloneExercises, on
             );
           })
         )}
-      </div>
-
-      <div className="flex justify-end gap-2 mt-4">
-        <Button variant="secondary" onClick={onCancel}>Annulla</Button>
-        <Button onClick={() => form.title.trim() && onSubmit(form)}>
-          <Save className="w-4 h-4" /> Salva Focus Tecnico
-        </Button>
       </div>
 
       <Modal open={showCreateExercise} onClose={() => setShowCreateExercise(false)} title="Nuovo Esercizio Singolo" wide>
@@ -8017,13 +8297,16 @@ function downloadBlob(content, filename, mime) {
 function downloadExerciseSheet(ex) {
   let body = "";
   if (ex.image) {
-    body += `<div style="page-break-inside: avoid;"><img src="${ex.image}" alt="${ex.title}" style="width:100%; max-height: 300px; object-fit: contain; border-radius: 8px; margin-bottom: 10px;" /></div>`;
+    // Immagine a "piena pagina": esce dai margini laterali del contenuto (16px)
+    // e non ha un limite di altezza, così il testo disegnato dentro l'immagine
+    // (schema, legenda, ecc.) resta leggibile invece di essere rimpicciolito.
+    body += `<div style="page-break-inside: avoid;"><img src="${ex.image}" alt="${ex.title}" style="display:block; width: calc(100% + 32px); margin: 0 -16px 12px -16px; object-fit: contain;" /></div>`;
   }
   body += `<h1 style="margin-top:0;">${ex.title || "Esercizio"}</h1>`;
   body += `<p><span class="badge">${ex.type || "Tecnica"}</span> <strong>Tempo:</strong> ${ex.time || "--"}</p>`;
   if (ex.goal) body += `<h2>Obiettivo</h2><p>${ex.goal}</p>`;
   if (ex.description) body += `<h2>Descrizione</h2><p>${ex.description}</p>`;
-  downloadPrintableHTML(`esercizio-${ex.title || "senza-titolo"}.html`, `Esercizio — ${ex.title || ""}`, `<div style="page-break-after: avoid; page-break-inside: avoid;">${body}</div>`);
+  downloadPrintableHTML(`esercizio-${ex.title || "senza-titolo"}.html`, `Esercizio — ${ex.title || ""}`, `<div style="page-break-after: avoid; page-break-inside: avoid;">${body}</div>`, 1100);
 }
 
 // Converte una dataURL (base64, come sono salvate le immagini e i documenti
@@ -8090,9 +8373,9 @@ function downloadFocusSheet(ft) {
   let body = `<h1 style="margin-top:0;">${ft.title || "Focus Tecnico"}</h1>`;
   body += `<p><strong>Durata totale:</strong> ${totalFocusMinutes(ft)} min</p>`;
   (ft.exercises || []).forEach((ex, i) => {
-    body += `<div style="page-break-inside: avoid; margin-top: 20px;">`;
+    body += `<div style="page-break-inside: avoid; margin-top: 24px;">`;
     if (ex.image) {
-      body += `<img src="${ex.image}" alt="${ex.title || ""}" style="width:100%; max-height: 320px; object-fit: contain; border-radius: 8px; margin-bottom: 8px;" />`;
+      body += `<img src="${ex.image}" alt="${ex.title || ""}" style="display:block; width: calc(100% + 32px); margin: 0 -16px 10px -16px; object-fit: contain;" />`;
     }
     body += `<h2>${i + 1}. ${ex.title || "Esercizio"}</h2>`;
     body += `<p><span class="badge">${ex.type || "Tecnica"}</span> <strong>Tempo:</strong> ${ex.time || "--"}</p>`;
@@ -8100,7 +8383,7 @@ function downloadFocusSheet(ft) {
     if (ex.description) body += `<p>${ex.description}</p>`;
     body += `</div>`;
   });
-  downloadPrintableHTML(`focus-${ft.title || "senza-titolo"}.html`, `Focus Tecnico — ${ft.title || ""}`, body);
+  downloadPrintableHTML(`focus-${ft.title || "senza-titolo"}.html`, `Focus Tecnico — ${ft.title || ""}`, body, 1100);
 }
 
 // Visualizzatore "esploso" di un Focus Tecnico: mostra un esercizio alla volta
@@ -8184,7 +8467,7 @@ function FocusDetailViewer({ focus, onClose, showToast }) {
         )}
         <div className="max-w-3xl w-full flex flex-col items-center gap-3 py-4 overflow-y-auto" style={{ maxHeight: "100%" }}>
           {current.image ? (
-            <img src={current.image} alt={current.title} className="max-w-full object-contain rounded-lg" style={{ maxHeight: "60vh" }} />
+            <img src={current.image} alt={current.title} className="max-w-full object-contain rounded-lg" style={{ maxHeight: "52vh" }} />
           ) : (
             <div className="w-full aspect-video rounded-lg bg-white/5 flex items-center justify-center text-slate-500 text-sm">
               Nessuna immagine per questo esercizio
@@ -8456,14 +8739,14 @@ function ImageLightbox({ src, alt, onClose }) {
 // Genera un file HTML autonomo e stampabile (funziona anche quando window.print()
 // è bloccato dalla sandbox dell'artifact): l'utente lo apre nel browser e da lì
 // può stampare o salvare come PDF.
-function downloadPrintableHTML(filename, docTitle, bodyHtml) {
+function downloadPrintableHTML(filename, docTitle, bodyHtml, maxWidth = 800) {
   const html = `<!DOCTYPE html>
 <html lang="it">
 <head>
 <meta charset="UTF-8" />
 <title>${docTitle}</title>
 <style>
-  body { font-family: -apple-system, Arial, sans-serif; color: #111; max-width: 800px; margin: 24px auto; padding: 0 16px; }
+  body { font-family: -apple-system, Arial, sans-serif; color: #111; max-width: ${maxWidth}px; margin: 24px auto; padding: 0 16px; }
   h1 { font-size: 20px; margin-bottom: 4px; }
   h2 { font-size: 16px; margin: 18px 0 6px; }
   p { font-size: 13px; line-height: 1.5; margin: 2px 0; }
