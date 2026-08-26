@@ -1192,6 +1192,19 @@ function formatDateTime(iso) {
   return `${d.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" })} alle ${d.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" })}`;
 }
 
+// Sottrae un numero di minuti a un orario "HH:MM", per calcolare l'orario di
+// ritrovo al campo a partire dall'orario di inizio partita.
+function subtractMinutesFromTime(timeStr, minutes) {
+  if (!timeStr) return null;
+  const [h, m] = timeStr.split(":").map(Number);
+  if (isNaN(h) || isNaN(m)) return null;
+  let total = h * 60 + m - minutes;
+  if (total < 0) total += 24 * 60; // partita dopo mezzanotte: caso limite, non dovrebbe capitare per un club giovanile
+  const hh = String(Math.floor(total / 60) % 24).padStart(2, "0");
+  const mm = String(total % 60).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
 // Promemoria di backup manuale: dato che la sincronizzazione tra dispositivi
 // diversi da questo (es. il cellulare) richiede un Esporta/Importa JSON
 // manuale, teniamo traccia in localStorage (non nei dati della stagione, per
@@ -5552,8 +5565,14 @@ function MatchDetail({ match, players, onUpdate, onDelete, onClose, teamColors, 
               onClick={async () => {
                 const imageUrl = generateConvocationImage(match, players, clubLabel);
                 const file = dataUrlToFile(imageUrl, `convocazione-${(match.opponent || "partita").replace(/[^a-z0-9]+/gi, "-")}.png`);
-                const label = `Convocazione vs ${match.opponent || ""} — ${formatDate(match.date)}`;
-                const shared = await shareFilesNative([file], { title: label, text: label });
+                const meetingTime = subtractMinutesFromTime(match.time, 45);
+                const label = [
+                  `Convocazione vs ${match.opponent || ""} - ${formatDate(match.date)} - ore ${match.time || "--"}${match.venue ? ` - campo ${match.venue}` : ""}`,
+                  meetingTime
+                    ? `Appuntamento al campo alle ore ${meetingTime}; presentarsi con tuta di rappresentanza, portare calzettoni e parastinchi`
+                    : "Presentarsi con tuta di rappresentanza, portare calzettoni e parastinchi",
+                ].join("\n");
+                const shared = await shareFilesNative([file], { title: `Convocazione vs ${match.opponent || ""}`, text: label });
                 if (!shared) {
                   const a = document.createElement("a");
                   a.href = imageUrl;
@@ -5561,7 +5580,7 @@ function MatchDetail({ match, players, onUpdate, onDelete, onClose, teamColors, 
                   document.body.appendChild(a);
                   a.click();
                   document.body.removeChild(a);
-                  openWhatsAppFallback(`${label} — allega l'immagine appena scaricata`);
+                  openWhatsAppFallback(`${label}\n(allega l'immagine appena scaricata)`);
                   showToast?.("Condivisione diretta non disponibile: immagine scaricata, allegala su WhatsApp manualmente.", "error");
                 }
               }}
