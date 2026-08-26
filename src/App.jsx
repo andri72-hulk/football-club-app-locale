@@ -1185,6 +1185,13 @@ function formatDate(iso) {
   return d.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+function formatDateTime(iso) {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return `${d.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" })} alle ${d.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" })}`;
+}
+
 function formatDateShort(iso) {
   if (!iso) return "-";
   const d = new Date(iso);
@@ -2227,6 +2234,7 @@ export default function FootballClubApp() {
               library={library}
               setLibrary={setLibrary}
               showToast={showToast}
+              lastSavedAt={lastSavedAt}
             />
           </>
         ) : tab === "configurations" ? (
@@ -6991,8 +6999,9 @@ function DossierUploadForm({ fileName, fileSize, onSubmit, onCancel }) {
    SEZIONE EXPORT / IMPORT
    ============================================================ */
 
-function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, library, setLibrary, showToast }) {
+function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, library, setLibrary, showToast, lastSavedAt }) {
   const fileInputRef = React.useRef(null);
+  const [importPreview, setImportPreview] = useState(null); // { data, fileName, isOlder }
 
   function exportFullJSON() {
     const payload = JSON.stringify(
@@ -7008,6 +7017,21 @@ function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, l
     fileInputRef.current?.click();
   }
 
+  function applyImportedData(data) {
+    setSeasons(data.seasons);
+    setActiveSeasonId(data.activeSeasonId || data.seasons[0]?.id);
+    if (data.library) {
+      setLibrary(
+        migrateLibraryCategories({
+          ...defaultLibrary(),
+          ...data.library,
+          config: { ...defaultConfig(), ...(data.library.config || {}) },
+        })
+      );
+    }
+    showToast("Dati importati con successo");
+  }
+
   function handleImportFile(e) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -7016,18 +7040,16 @@ function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, l
       try {
         const data = JSON.parse(ev.target.result);
         if (data.seasons && Array.isArray(data.seasons)) {
-          setSeasons(data.seasons);
-          setActiveSeasonId(data.activeSeasonId || data.seasons[0]?.id);
-          if (data.library) {
-            setLibrary(
-              migrateLibraryCategories({
-                ...defaultLibrary(),
-                ...data.library,
-                config: { ...defaultConfig(), ...(data.library.config || {}) },
-              })
-            );
+          // Se il backup risale a prima dell'ultimo salvataggio già presente su questo
+          // dispositivo, avvisiamo prima di sovrascrivere: capita facilmente lavorando
+          // su più dispositivi (es. PC + cellulare) con backup manuali.
+          const backupTime = data.exportedAt ? new Date(data.exportedAt).getTime() : 0;
+          const localTime = lastSavedAt ? lastSavedAt.getTime() : 0;
+          if (backupTime && localTime && backupTime < localTime) {
+            setImportPreview({ data, fileName: file.name, isOlder: true });
+          } else {
+            applyImportedData(data);
           }
-          showToast("Dati importati con successo");
         } else {
           showToast("File non valido: struttura dati non riconosciuta", "error");
         }
@@ -7258,6 +7280,27 @@ function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, l
             <Button variant="secondary" onClick={handleImportClick}><Upload className="w-4 h-4" /> Importa JSON</Button>
             <input ref={fileInputRef} type="file" accept="application/json" className="hidden" onChange={handleImportFile} />
           </div>
+          {importPreview?.isOlder && (
+            <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
+              <p className="text-xs text-amber-300 mb-2">
+                <AlertCircle className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />
+                Il file <strong>{importPreview.fileName}</strong> risale al {formatDateTime(importPreview.data.exportedAt)}, mentre i dati già presenti su questo dispositivo sono più recenti (ultimo salvataggio: {formatDateTime(lastSavedAt?.toISOString())}). Importarlo sovrascriverà i dati più recenti con quelli del backup più vecchio.
+              </p>
+              <div className="flex gap-2">
+                <Button variant="secondary" className="px-2.5 py-1 text-xs" onClick={() => setImportPreview(null)}>Annulla</Button>
+                <Button
+                  variant="danger"
+                  className="px-2.5 py-1 text-xs"
+                  onClick={() => {
+                    applyImportedData(importPreview.data);
+                    setImportPreview(null);
+                  }}
+                >
+                  Importa comunque
+                </Button>
+              </div>
+            </div>
+          )}
         </Card>
 
         <Card className="p-5">
