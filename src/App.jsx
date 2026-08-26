@@ -2990,13 +2990,13 @@ function CalendarSection({ season, onGoTo }) {
         }
       />
 
-      <div className="grid grid-cols-7 gap-1.5 mb-1.5">
+      <div className="grid grid-cols-7 gap-1 mb-1">
         {ITALIAN_WEEKDAYS.map((w) => (
-          <div key={w} className="text-center text-[11px] font-semibold text-slate-500 uppercase py-1">{w}</div>
+          <div key={w} className="text-center text-[10px] font-semibold text-slate-500 uppercase py-0.5">{w}</div>
         ))}
       </div>
 
-      <div className="grid grid-cols-7 gap-1.5">
+      <div className="grid grid-cols-7 gap-1">
         {cells.map((day, i) => {
           if (day === null) return <div key={`empty-${i}`} />;
           const d = new Date(year, month, day);
@@ -3007,12 +3007,12 @@ function CalendarSection({ season, onGoTo }) {
             <button
               key={key}
               onClick={() => setSelectedDay(d)}
-              className={`aspect-square rounded-xl border p-1.5 flex flex-col items-center sm:items-start gap-1 text-left transition-colors ${
+              className={`h-12 sm:h-14 rounded-lg border p-1 flex flex-col items-center sm:items-start gap-0.5 text-left transition-colors ${
                 isToday ? "border-emerald-500/50 bg-emerald-500/10" : "border-white/10 hover:bg-white/5"
               }`}
             >
-              <span className={`text-xs font-semibold ${isToday ? "text-emerald-400" : "text-slate-300"}`}>{day}</span>
-              <div className="flex flex-wrap gap-1 justify-center sm:justify-start">
+              <span className={`text-[11px] font-semibold ${isToday ? "text-emerald-400" : "text-slate-300"}`}>{day}</span>
+              <div className="flex flex-wrap gap-0.5 justify-center sm:justify-start">
                 {events.some((e) => e.type === "training") && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />}
                 {events.some((e) => e.type === "match") && <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />}
               </div>
@@ -5597,6 +5597,19 @@ function MatchDetail({ match, players, onUpdate, onDelete, onClose, teamColors, 
         <ColorPair primary={match.opponentColorPrimary} secondary={match.opponentColorSecondary} size={16} />
         <span>{match.opponent}</span>
       </div>
+
+      {convocatiPlayers.length > 0 && (
+        <div className="mb-5">
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Convocati ({convocatiPlayers.length})</p>
+          <div className="rounded-xl border border-white/10 p-3 flex flex-wrap gap-x-4 gap-y-1.5">
+            {convocatiPlayers.map((p) => (
+              <span key={p.id} className="text-sm text-slate-300">
+                <span className="font-medium text-slate-100">{p.name}</span> — {p.role}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {confirmDelete && (
         <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 mb-4 flex items-center justify-between gap-2">
@@ -8281,11 +8294,23 @@ function generateFocusSummaryImage(focus) {
 // pronta da condividere su WhatsApp: intestazione con avversario/data/luogo e
 // elenco dei convocati con solo il nome (senza numero di maglia né ruolo, su
 // richiesta, per un messaggio più semplice da leggere per i genitori).
+// Riduce la dimensione del font finché il testo non entra nella larghezza
+// massima disponibile, per evitare che nomi squadra lunghi escano dal bordo.
+function fitBoldFontSize(ctx, text, maxWidth, startSize, minSize = 16) {
+  let size = startSize;
+  while (size > minSize) {
+    ctx.font = `bold ${size}px Arial, sans-serif`;
+    if (ctx.measureText(text).width <= maxWidth) break;
+    size -= 2;
+  }
+  return size;
+}
+
 function generateConvocationImage(match, players, clubLabel) {
   const convocati = players.filter((p) => (match.convocati || []).includes(p.id));
   const width = 800;
   const padding = 48;
-  const headerHeight = 190;
+  const headerHeight = 210;
   const rowHeight = 42;
   const height = headerHeight + Math.max(convocati.length, 1) * rowHeight + padding;
 
@@ -8293,33 +8318,39 @@ function generateConvocationImage(match, players, clubLabel) {
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext("2d");
+  const maxLineWidth = width - padding * 2;
 
   // Sfondo verde chiaro, come richiesto
   ctx.fillStyle = "#dcfce7";
   ctx.fillRect(0, 0, width, height);
 
-  ctx.fillStyle = "#166534";
-  ctx.font = "600 18px Arial, sans-serif";
-  ctx.fillText(clubLabel || "Convocazione", padding, 46);
+  // Tipo partita (Campionato/Amichevole/Torneo), in evidenza in alto
+  ctx.fillStyle = "#15803d";
+  ctx.font = "700 15px Arial, sans-serif";
+  const typeLabel = [match.matchType, match.matchType === "Torneo" ? match.tournamentName : null].filter(Boolean).join(" · ");
+  ctx.fillText((typeLabel || "Partita").toUpperCase(), padding, 34);
 
+  // Squadre: stessa dimensione di font per entrambi i nomi
+  const teamsLine = `${clubLabel || "Squadra"}  vs  ${match.opponent || ""}`;
+  const teamsFontSize = fitBoldFontSize(ctx, teamsLine, maxLineWidth, 32);
   ctx.fillStyle = "#052e1a";
-  ctx.font = "bold 34px Arial, sans-serif";
-  ctx.fillText(`vs ${match.opponent || ""}`, padding, 88);
+  ctx.font = `bold ${teamsFontSize}px Arial, sans-serif`;
+  ctx.fillText(teamsLine, padding, 82);
 
   ctx.fillStyle = "#166534";
-  ctx.font = "500 19px Arial, sans-serif";
+  ctx.font = "500 18px Arial, sans-serif";
   const infoLine = [formatDate(match.date), match.time, match.venue].filter(Boolean).join(" · ");
-  ctx.fillText(infoLine, padding, 118);
+  ctx.fillText(infoLine, padding, 112);
 
   ctx.strokeStyle = "rgba(5,46,26,0.25)";
   ctx.beginPath();
-  ctx.moveTo(padding, 140);
-  ctx.lineTo(width - padding, 140);
+  ctx.moveTo(padding, 134);
+  ctx.lineTo(width - padding, 134);
   ctx.stroke();
 
   ctx.fillStyle = "#052e1a";
   ctx.font = "bold 20px Arial, sans-serif";
-  ctx.fillText(`Convocati (${convocati.length})`, padding, 172);
+  ctx.fillText(`Convocati (${convocati.length})`, padding, 166);
 
   let y = headerHeight + 20;
   if (convocati.length === 0) {
