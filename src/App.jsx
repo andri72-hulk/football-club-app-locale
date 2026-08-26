@@ -1877,6 +1877,24 @@ export default function FootballClubApp() {
     if (granted) showToast("Accesso al file confermato");
   }
 
+  // Riconferma automatica del permesso: il browser concede il permesso di
+  // scrittura sul file collegato solo in risposta a un'interazione reale
+  // dell'utente (non può essere richiesto in automatico al caricamento).
+  // Appena serve una riconferma, agganciamo un ascoltatore "una tantum" su
+  // tutta l'app: al primo click ovunque, si tenta di riottenere il permesso,
+  // così l'utente non deve andare apposta in "Esporta Dati".
+  useEffect(() => {
+    if (!syncNeedsPermission || !syncHandle) return;
+    const handleFirstClick = () => {
+      handleReconfirmSyncPermission();
+    };
+    document.addEventListener("click", handleFirstClick, { once: true, capture: true });
+    return () => {
+      document.removeEventListener("click", handleFirstClick, { capture: true });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncNeedsPermission, syncHandle]);
+
   // Debounce: aspetta che l'utente finisca di modificare prima di salvare,
   // evitando chiamate multiple ravvicinate (es. slider trascinati, digitazione rapida)
   useEffect(() => {
