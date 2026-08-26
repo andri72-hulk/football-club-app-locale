@@ -15,7 +15,8 @@ import {
   Download, Upload, Cloud, CloudOff, Save, Trash2, Edit2, CheckCircle2,
   XCircle, AlertCircle, HeartPulse, Target, Zap, FileSpreadsheet, FileText,
   ArrowLeftRight, Award, Flag, UserCheck, UserX, Menu, ChevronDown, ChevronUp,
-  TrendingUp, RefreshCw, Info, LayoutGrid, Handshake, StickyNote, SlidersHorizontal
+  TrendingUp, RefreshCw, Info, LayoutGrid, Handshake, StickyNote, SlidersHorizontal,
+  Eye, Maximize2, Share2
 } from "lucide-react";
 
 /* ============================================================
@@ -3515,6 +3516,7 @@ function TrainingsSection({ season, updateSeason, library, updateLibrary, showTo
           exercises={library.exercises || []}
           onSaveExercise={saveExercise}
           onDeleteExercise={deleteExercise}
+          showToast={showToast}
         />
       ) : subTab === "esercizi" ? (
         <ExercisesLibrarySection
@@ -3607,10 +3609,11 @@ function emptyExercise() {
   return { id: uid("ex"), title: "", type: "Tecnica", category: "", time: "", goal: "", description: "", image: null };
 }
 
-function FocusTecniciSection({ focusTecnici, onSave, onDelete, exercises, onSaveExercise, onDeleteExercise }) {
+function FocusTecniciSection({ focusTecnici, onSave, onDelete, exercises, onSaveExercise, onDeleteExercise, showToast }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [expandedFocus, setExpandedFocus] = useState(null);
 
   const [showExerciseForm, setShowExerciseForm] = useState(false);
   const [editingExercise, setEditingExercise] = useState(null);
@@ -3651,6 +3654,44 @@ function FocusTecniciSection({ focusTecnici, onSave, onDelete, exercises, onSave
                   <p className="text-[11px] text-emerald-400 font-medium mt-0.5">Durata totale: {totalFocusMinutes(ft)} min</p>
                 </div>
                 <div className="flex gap-1 shrink-0">
+                  <button
+                    onClick={() => setExpandedFocus(ft)}
+                    className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400"
+                    title="Espandi (immagini grandi in sequenza)"
+                  >
+                    <Maximize2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const withImages = (ft.exercises || []).filter((ex) => ex.image);
+                      if (withImages.length === 0) return showToast?.("Nessuna immagine presente in questo Focus", "error");
+                      const files = withImages.map((ex, i) =>
+                        dataUrlToFile(ex.image, `${(ex.title || `esercizio-${i + 1}`).replace(/[^a-z0-9]+/gi, "-")}.jpg`)
+                      );
+                      const shared = await shareFilesNative(files, { title: ft.title, text: ft.title });
+                      if (!shared) {
+                        withImages.forEach((ex, i) => {
+                          setTimeout(() => {
+                            const a = document.createElement("a");
+                            a.href = ex.image;
+                            a.download = `${(ft.title || "focus").replace(/[^a-z0-9]+/gi, "-")}-${i + 1}.jpg`;
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                          }, i * 350);
+                        });
+                        openWhatsAppFallback(`${ft.title || "Focus Tecnico"} — allega le immagini appena scaricate`);
+                        showToast?.("Condivisione diretta non disponibile: immagini scaricate, allegale su WhatsApp manualmente.", "error");
+                      }
+                    }}
+                    className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400"
+                    title="Condividi tutte le immagini (es. su WhatsApp)"
+                  >
+                    <Share2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={() => downloadFocusSheet(ft)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400" title="Scarica scheda completa">
+                    <Download className="w-3.5 h-3.5" />
+                  </button>
                   <button
                     onClick={() => {
                       setEditing(ft);
@@ -3728,6 +3769,10 @@ function FocusTecniciSection({ focusTecnici, onSave, onDelete, exercises, onSave
           />
         )}
       </Modal>
+
+      {expandedFocus && (
+        <FocusDetailViewer focus={expandedFocus} onClose={() => setExpandedFocus(null)} showToast={showToast} />
+      )}
     </div>
   );
 }
@@ -3999,6 +4044,15 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
                           </Badge>
                         </div>
                         <div className="flex gap-1 shrink-0">
+                          {ex.image && (
+                            <button
+                              onClick={() => shareOrFallback({ dataUrl: ex.image, filename: `${(ex.title || "esercizio").replace(/[^a-z0-9]+/gi, "-")}.jpg`, label: ex.title, showToast })}
+                              className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400"
+                              title="Condividi immagine (es. su WhatsApp)"
+                            >
+                              <Share2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button onClick={() => downloadExerciseSheet(ex)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400" title="Stampa / Scarica scheda esercizio">
                             <Download className="w-3.5 h-3.5" />
                           </button>
@@ -6709,6 +6763,7 @@ function DossierSection({ library, updateLibrary, showToast }) {
   const [pendingFile, setPendingFile] = useState(null); // { fileName, fileType, fileSize, dataUrl }
   const [showUploadForm, setShowUploadForm] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [previewDoc, setPreviewDoc] = useState(null);
   const fileInputRef = React.useRef(null);
 
   function handleFileSelected(e) {
@@ -6837,6 +6892,16 @@ function DossierSection({ library, updateLibrary, showToast }) {
                   </p>
                 </div>
                 <div className="flex gap-1 shrink-0">
+                  <button onClick={() => setPreviewDoc(d)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400" title="Anteprima">
+                    <Eye className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => shareOrFallback({ dataUrl: d.dataUrl, filename: d.fileName, label: d.title, showToast })}
+                    className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400"
+                    title="Condividi (es. su WhatsApp)"
+                  >
+                    <Share2 className="w-3.5 h-3.5" />
+                  </button>
                   <button onClick={() => openDocument(d)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400" title="Apri / Scarica">
                     <Download className="w-3.5 h-3.5" />
                   </button>
@@ -6873,6 +6938,8 @@ function DossierSection({ library, updateLibrary, showToast }) {
           />
         )}
       </Modal>
+
+      {previewDoc && <DossierPreviewModal doc={previewDoc} onClose={() => setPreviewDoc(null)} showToast={showToast} />}
     </div>
   );
 }
@@ -7294,6 +7361,248 @@ function downloadExerciseSheet(ex) {
   if (ex.goal) body += `<h2>Obiettivo</h2><p>${ex.goal}</p>`;
   if (ex.description) body += `<h2>Descrizione</h2><p>${ex.description}</p>`;
   downloadPrintableHTML(`esercizio-${ex.title || "senza-titolo"}.html`, `Esercizio — ${ex.title || ""}`, `<div style="page-break-after: avoid; page-break-inside: avoid;">${body}</div>`);
+}
+
+// Converte una dataURL (base64, come sono salvate le immagini e i documenti
+// nell'app) in un vero oggetto File: la Web Share API richiede File reali,
+// non stringhe, per poter condividere allegati.
+function dataUrlToFile(dataUrl, filename) {
+  const [header, base64] = dataUrl.split(",");
+  const mimeMatch = header.match(/data:(.*?);base64/);
+  const mime = mimeMatch ? mimeMatch[1] : "application/octet-stream";
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new File([bytes], filename, { type: mime });
+}
+
+// Prova a condividere uno o più file tramite il selettore nativo del dispositivo
+// (Web Share API). Su smartphone/tablet questo mostra WhatsApp tra le app
+// disponibili: selezionandolo, è WhatsApp stesso a far scegliere il gruppo o
+// contatto di destinazione — è la via più diretta oggi possibile, perché
+// WhatsApp non offre un modo per un sito web di inviare file a un gruppo
+// specifico senza che sia l'utente a sceglierlo.
+// Ritorna true se la condivisione è partita (o annullata volontariamente),
+// false se questo dispositivo/browser non la supporta (tipico su desktop),
+// nel qual caso va usato un ripiego (scaricare il file + link WhatsApp con testo).
+async function shareFilesNative(files, meta = {}) {
+  try {
+    if (typeof navigator !== "undefined" && navigator.canShare && navigator.canShare({ files })) {
+      await navigator.share({ files, title: meta.title, text: meta.text });
+      return true;
+    }
+  } catch (e) {
+    if (e?.name === "AbortError") return true; // l'utente ha annullato: non è un errore da segnalare
+  }
+  return false;
+}
+
+// Ripiego quando la condivisione diretta del file non è supportata: apre
+// WhatsApp (app o Web) con un messaggio pronto, così l'utente sceglie il
+// gruppo e allega a mano il file che nel frattempo è stato scaricato.
+function openWhatsAppFallback(text) {
+  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+}
+
+// Funzione condivisa da tutti i pulsanti "Condividi": tenta la condivisione
+// nativa del file (WhatsApp compreso) e, se non disponibile, scarica il file
+// e apre comunque WhatsApp con un messaggio pronto per l'invio manuale.
+async function shareOrFallback({ dataUrl, filename, label, showToast }) {
+  const file = dataUrlToFile(dataUrl, filename);
+  const shared = await shareFilesNative([file], { title: label, text: label });
+  if (shared) return;
+  const a = document.createElement("a");
+  a.href = dataUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  openWhatsAppFallback(`${label} — allega il file appena scaricato`);
+  showToast?.("Condivisione diretta non disponibile su questo browser: file scaricato, allegalo su WhatsApp manualmente.", "error");
+}
+
+// Genera e scarica la scheda completa di un Focus Tecnico: tutte le immagini
+// degli esercizi in sequenza, ciascuna a piena pagina, seguita dai dettagli.
+function downloadFocusSheet(ft) {
+  let body = `<h1 style="margin-top:0;">${ft.title || "Focus Tecnico"}</h1>`;
+  body += `<p><strong>Durata totale:</strong> ${totalFocusMinutes(ft)} min</p>`;
+  (ft.exercises || []).forEach((ex, i) => {
+    body += `<div style="page-break-inside: avoid; margin-top: 20px;">`;
+    if (ex.image) {
+      body += `<img src="${ex.image}" alt="${ex.title || ""}" style="width:100%; max-height: 320px; object-fit: contain; border-radius: 8px; margin-bottom: 8px;" />`;
+    }
+    body += `<h2>${i + 1}. ${ex.title || "Esercizio"}</h2>`;
+    body += `<p><span class="badge">${ex.type || "Tecnica"}</span> <strong>Tempo:</strong> ${ex.time || "--"}</p>`;
+    if (ex.goal) body += `<p><strong>Obiettivo:</strong> ${ex.goal}</p>`;
+    if (ex.description) body += `<p>${ex.description}</p>`;
+    body += `</div>`;
+  });
+  downloadPrintableHTML(`focus-${ft.title || "senza-titolo"}.html`, `Focus Tecnico — ${ft.title || ""}`, body);
+}
+
+// Visualizzatore "esploso" di un Focus Tecnico: mostra un esercizio alla volta
+// a piena schermata con immagine grande, con navigazione avanti/indietro e la
+// possibilità di scaricare (o condividere) tutte le immagini della sessione.
+function FocusDetailViewer({ focus, onClose, showToast }) {
+  const exercisesWithContent = (focus.exercises || []);
+  const [index, setIndex] = useState(0);
+  const current = exercisesWithContent[index];
+  if (!current) return null;
+
+  function goTo(delta) {
+    setIndex((i) => Math.max(0, Math.min(exercisesWithContent.length - 1, i + delta)));
+  }
+
+  function downloadAllImages() {
+    const withImages = exercisesWithContent.filter((ex) => ex.image);
+    if (withImages.length === 0) return showToast?.("Nessuna immagine presente in questo Focus", "error");
+    withImages.forEach((ex, i) => {
+      setTimeout(() => {
+        const a = document.createElement("a");
+        a.href = ex.image;
+        a.download = `${(focus.title || "focus").replace(/[^a-z0-9]+/gi, "-")}-${i + 1}-${(ex.title || "esercizio").replace(/[^a-z0-9]+/gi, "-")}.jpg`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }, i * 350); // piccolo intervallo tra un download e l'altro: alcuni browser bloccano download multipli simultanei
+    });
+    showToast?.(`Download di ${withImages.length} immagini avviato`);
+  }
+
+  async function shareAllImages() {
+    const withImages = exercisesWithContent.filter((ex) => ex.image);
+    if (withImages.length === 0) return showToast?.("Nessuna immagine presente in questo Focus", "error");
+    const files = withImages.map((ex, i) =>
+      dataUrlToFile(ex.image, `${(ex.title || `esercizio-${i + 1}`).replace(/[^a-z0-9]+/gi, "-")}.jpg`)
+    );
+    const shared = await shareFilesNative(files, { title: focus.title, text: focus.title });
+    if (!shared) {
+      downloadAllImages();
+      openWhatsAppFallback(`${focus.title || "Focus Tecnico"} — allega le immagini appena scaricate`);
+      showToast?.("Condivisione diretta non disponibile: immagini scaricate, allegale su WhatsApp manualmente.", "error");
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/95 flex flex-col" style={{ zIndex: 100 }}>
+      <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-white/10 flex-wrap">
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-white truncate">{focus.title || "Focus Tecnico"}</p>
+          <p className="text-[11px] text-slate-400">Esercizio {index + 1} di {exercisesWithContent.length}</p>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button onClick={shareAllImages} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white" title="Condividi tutte le immagini">
+            <Share2 className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Condividi tutte</span>
+          </button>
+          <button onClick={downloadAllImages} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white" title="Scarica tutte le immagini">
+            <Download className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Scarica tutte</span>
+          </button>
+          <button onClick={onClose} className="rounded-lg p-2 hover:bg-white/10 text-white">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 flex items-center justify-center relative px-4 min-h-0">
+        {index > 0 && (
+          <button onClick={() => goTo(-1)} className="absolute left-2 sm:left-4 rounded-full p-2 bg-white/10 hover:bg-white/20 text-white">
+            <ChevronLeft className="w-6 h-6" />
+          </button>
+        )}
+        <div className="max-w-3xl w-full flex flex-col items-center gap-3 py-4 overflow-y-auto" style={{ maxHeight: "100%" }}>
+          {current.image ? (
+            <img src={current.image} alt={current.title} className="max-w-full object-contain rounded-lg" style={{ maxHeight: "60vh" }} />
+          ) : (
+            <div className="w-full aspect-video rounded-lg bg-white/5 flex items-center justify-center text-slate-500 text-sm">
+              Nessuna immagine per questo esercizio
+            </div>
+          )}
+          <div className="w-full text-left px-1">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              {current.type && <Badge className={EXERCISE_TYPE_STYLES[current.type] || EXERCISE_TYPE_STYLES.Tecnica}>{current.type}</Badge>}
+              <p className="text-base font-bold text-white">{current.title || "Esercizio"}</p>
+              <span className="text-xs text-slate-400">· {current.time || "--"}</span>
+            </div>
+            {current.goal && <p className="text-sm text-emerald-400 italic mb-1">Obiettivo: {current.goal}</p>}
+            {current.description && <p className="text-sm text-slate-300">{current.description}</p>}
+          </div>
+        </div>
+        {index < exercisesWithContent.length - 1 && (
+          <button onClick={() => goTo(1)} className="absolute right-2 sm:right-4 rounded-full p-2 bg-white/10 hover:bg-white/20 text-white">
+            <ChevronRight className="w-6 h-6" />
+          </button>
+        )}
+      </div>
+
+      <div className="flex items-center justify-center gap-1.5 py-3 border-t border-white/10 overflow-x-auto px-4">
+        {exercisesWithContent.map((ex, i) => (
+          <button
+            key={ex.id || i}
+            onClick={() => setIndex(i)}
+            className={`w-2 h-2 rounded-full shrink-0 ${i === index ? "bg-emerald-400" : "bg-white/20"}`}
+            title={ex.title}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Anteprima di un documento del Dossier senza doverlo scaricare: immagini e
+// PDF vengono mostrati direttamente; per gli altri formati (Word, Excel, ecc.)
+// il browser non può renderizzare in linea, quindi si propone il download.
+function DossierPreviewModal({ doc, onClose, showToast }) {
+  if (!doc) return null;
+  const isImage = doc.fileType?.startsWith("image/");
+  const isPdf = doc.fileType === "application/pdf";
+
+  function download() {
+    const a = document.createElement("a");
+    a.href = doc.dataUrl;
+    a.download = doc.fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/90 z-[100] flex flex-col">
+      <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-white/10">
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-white truncate">{doc.title}</p>
+          <p className="text-[11px] text-slate-400 truncate">{doc.fileName}</p>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={() => shareOrFallback({ dataUrl: doc.dataUrl, filename: doc.fileName, label: doc.title, showToast })}
+            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white"
+          >
+            <Share2 className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Condividi</span>
+          </button>
+          <button onClick={download} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white">
+            <Download className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Scarica</span>
+          </button>
+          <button onClick={onClose} className="rounded-lg p-2 hover:bg-white/10 text-white">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 flex items-center justify-center overflow-auto p-4">
+        {isImage ? (
+          <img src={doc.dataUrl} alt={doc.title} className="max-w-full max-h-full object-contain rounded-lg" />
+        ) : isPdf ? (
+          <iframe src={doc.dataUrl} title={doc.title} className="w-full h-full rounded-lg bg-white" style={{ minHeight: "70vh" }} />
+        ) : (
+          <div className="text-center text-slate-400 text-sm max-w-sm">
+            <FileText className="w-10 h-10 mx-auto mb-3 text-slate-600" />
+            Anteprima non disponibile per questo tipo di file ({doc.fileType || "sconosciuto"}).
+            <br />
+            Usa "Scarica" per aprirlo con l'app giusta sul tuo dispositivo.
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // Overlay per ingrandire un'immagine con pulsante di download
