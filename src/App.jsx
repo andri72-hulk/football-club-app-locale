@@ -3670,7 +3670,10 @@ function FocusTecniciSection({ focusTecnici, onSave, onDelete, exercises, onSave
                         dataUrlToFile(ex.image, `${(ex.title || `esercizio-${i + 1}`).replace(/[^a-z0-9]+/gi, "-")}.jpg`)
                       );
                       const files = [summaryFile, ...exerciseFiles];
-                      const shared = await shareFilesNative(files, { title: ft.title, text: ft.title });
+                      // Molte app (WhatsApp su Android in particolare) mostrano più file
+                      // condivisi insieme in ordine inverso rispetto a come vengono passati:
+                      // invertiamo qui, così il riepilogo arriva per primo una volta ricevuto.
+                      const shared = await shareFilesNative([...files].reverse(), { title: ft.title, text: ft.title });
                       if (!shared) {
                         const baseName = (ft.title || "focus").replace(/[^a-z0-9]+/gi, "-");
                         const a0 = document.createElement("a");
@@ -7494,7 +7497,10 @@ function FocusDetailViewer({ focus, onClose, showToast }) {
       dataUrlToFile(ex.image, `${(ex.title || `esercizio-${i + 1}`).replace(/[^a-z0-9]+/gi, "-")}.jpg`)
     );
     const files = [summaryFile, ...exerciseFiles];
-    const shared = await shareFilesNative(files, { title: focus.title, text: focus.title });
+    // Molte app (WhatsApp su Android in particolare) mostrano più file condivisi
+    // insieme in ordine inverso rispetto a come vengono passati: invertiamo qui,
+    // così il riepilogo arriva per primo una volta ricevuto.
+    const shared = await shareFilesNative([...files].reverse(), { title: focus.title, text: focus.title });
     if (!shared) {
       downloadAllImages();
       openWhatsAppFallback(`${focus.title || "Focus Tecnico"} — allega le immagini appena scaricate`);
