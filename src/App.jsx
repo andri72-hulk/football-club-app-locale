@@ -1523,12 +1523,13 @@ function Button({ children, variant = "primary", className = "", ...props }) {
   );
 }
 
-function Modal({ open, onClose, title, children, wide = false }) {
+function Modal({ open, onClose, title, children, wide = false, size }) {
   if (!open) return null;
+  const widthClass = size === "xl" ? "sm:max-w-5xl" : wide ? "sm:max-w-3xl" : "sm:max-w-lg";
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-start justify-center bg-black/70 backdrop-blur-sm p-0">
       <div
-        className={`w-full ${wide ? "sm:max-w-3xl" : "sm:max-w-lg"} overflow-y-auto rounded-t-3xl sm:rounded-b-2xl border border-white/10 bg-slate-900 shadow-2xl`}
+        className={`w-full ${widthClass} overflow-y-auto rounded-t-3xl sm:rounded-b-2xl border border-white/10 bg-slate-900 shadow-2xl`}
         style={{ maxHeight: "min(98vh, calc(100vh - 4px))" }}
       >
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-white/10 bg-slate-900/95 backdrop-blur px-5 py-4">
@@ -4332,7 +4333,7 @@ function FocusTecniciSection({ focusTecnici, onSave, onDelete, exercises, onSave
         </div>
       )}
 
-      <Modal open={showForm} onClose={() => setShowForm(false)} title="Focus Tecnico" wide>
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="Focus Tecnico" size="xl">
         {editing && (
           <FocusTecnicoForm
             initial={editing}
@@ -4388,11 +4389,17 @@ function PlayBookSection({ exercises, focusTecnici, onSaveExercise, onAddToFocus
     new Set([...(config.categories || []), ...(exercises || []).map((ex) => ex.category).filter(Boolean)])
   );
 
-  const filtered = (exercises || []).filter((ex) => {
+  const matchesFilters = (ex) => {
     const matchesType = typeFilter === "Tutti" || (ex.type || "ND") === typeFilter;
     const matchesCategory = categoryFilter === "Tutte" || (categoryFilter === "ND" ? !ex.category : ex.category === categoryFilter);
     return matchesType && matchesCategory;
-  });
+  };
+  // Ordinato per tipologia (nell'ordine di allTypesPresent): così la navigazione
+  // avanti/indietro nel visualizzatore esploso segue esattamente lo stesso ordine
+  // mostrato nell'elenco raggruppato qui sotto, invece dell'ordine di inserimento.
+  const filtered = allTypesPresent.flatMap((type) =>
+    (exercises || []).filter((ex) => (ex.type || "ND") === type && matchesFilters(ex))
+  );
 
   const grouped = allTypesPresent
     .map((type) => ({ type, items: filtered.filter((ex) => (ex.type || "ND") === type) }))
@@ -4478,6 +4485,8 @@ function PlayBookSection({ exercises, focusTecnici, onSaveExercise, onAddToFocus
           onAddToFocus={onAddToFocus}
           onCreateFocus={onCreateFocus}
           showToast={showToast}
+          allExercises={exercises || []}
+          allTypesPresent={allTypesPresent}
         />
       )}
     </div>
@@ -4487,9 +4496,10 @@ function PlayBookSection({ exercises, focusTecnici, onSaveExercise, onAddToFocus
 // Vista esplosa del PlayBook: un esercizio alla volta, immagine grande,
 // navigazione avanti/indietro nell'insieme filtrato, con azioni rapide per
 // modificare l'esercizio o aggiungerlo a un Focus Tecnico (esistente o nuovo).
-function PlayBookViewer({ exercises, index, onIndexChange, onClose, onSaveExercise, focusTecnici, onAddToFocus, onCreateFocus, showToast }) {
+function PlayBookViewer({ exercises, index, onIndexChange, onClose, onSaveExercise, focusTecnici, onAddToFocus, onCreateFocus, showToast, allExercises, allTypesPresent }) {
   const [showEdit, setShowEdit] = useState(false);
   const [showAddToFocus, setShowAddToFocus] = useState(false);
+  const [showDownloadMenu, setShowDownloadMenu] = useState(false);
   const current = exercises[index];
   if (!current) return null;
 
@@ -4497,6 +4507,22 @@ function PlayBookViewer({ exercises, index, onIndexChange, onClose, onSaveExerci
     const next = index + delta;
     if (next < 0 || next >= exercises.length) return;
     onIndexChange(next);
+  }
+
+  const currentType = current.type || "ND";
+  const categoryItems = (allExercises || []).filter((ex) => (ex.type || "ND") === currentType);
+
+  function handleDownloadCategory() {
+    downloadCategorySheet(currentType, categoryItems);
+    setShowDownloadMenu(false);
+  }
+  function handleDownloadPlayBook() {
+    downloadPlayBookSheet(allExercises || [], allTypesPresent || [currentType]);
+    setShowDownloadMenu(false);
+  }
+  function handleDownloadSingle() {
+    downloadExerciseSheet(current);
+    setShowDownloadMenu(false);
   }
 
   return (
@@ -4522,9 +4548,31 @@ function PlayBookViewer({ exercises, index, onIndexChange, onClose, onSaveExerci
           >
             <Share2 className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Condividi</span>
           </button>
-          <button onClick={() => downloadExerciseSheet(current)} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white" title="Scarica scheda">
-            <Download className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Scarica</span>
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => setShowDownloadMenu((v) => !v)}
+              className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white"
+              title="Opzioni di download"
+            >
+              <Download className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Scarica</span> <ChevronDown className="w-3 h-3" />
+            </button>
+            {showDownloadMenu && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setShowDownloadMenu(false)} />
+                <div className="absolute right-0 top-full mt-1 w-56 rounded-xl border border-white/10 bg-slate-900 shadow-2xl overflow-hidden z-20">
+                  <button onClick={handleDownloadSingle} className="w-full text-left px-3.5 py-2.5 text-xs text-slate-200 hover:bg-white/10">
+                    Scarica Scheda <span className="block text-[10px] text-slate-500">Solo questo esercizio</span>
+                  </button>
+                  <button onClick={handleDownloadCategory} className="w-full text-left px-3.5 py-2.5 text-xs text-slate-200 hover:bg-white/10 border-t border-white/5">
+                    Scarica Categoria <span className="block text-[10px] text-slate-500">Tutti gli esercizi "{currentType}" ({categoryItems.length})</span>
+                  </button>
+                  <button onClick={handleDownloadPlayBook} className="w-full text-left px-3.5 py-2.5 text-xs text-slate-200 hover:bg-white/10 border-t border-white/5">
+                    Scarica PlayBook <span className="block text-[10px] text-slate-500">Tutti gli esercizi presenti ({(allExercises || []).length})</span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           <button onClick={() => setShowAddToFocus(true)} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white" title="Aggiungi a un Focus Tecnico">
             <Plus className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Aggiungi a Focus</span>
           </button>
@@ -5004,131 +5052,141 @@ function FocusTecnicoForm({ initial, onSubmit, onCancel, standaloneExercises, on
           </Button>
         </div>
       </div>
-      <input
-        className={inputClass + " mb-4"}
-        value={form.title}
-        onChange={(e) => setForm({ ...form, title: e.target.value })}
-        placeholder="Es. Possesso palla e transizioni"
-      />
+      <div className="grid lg:grid-cols-2 gap-5">
+        {/* COLONNA SINISTRA: titolo e riepilogo esercizi selezionati */}
+        <div>
+          <input
+            className={inputClass + " mb-4"}
+            value={form.title}
+            onChange={(e) => setForm({ ...form, title: e.target.value })}
+            placeholder="Es. Possesso palla e transizioni"
+          />
 
-      {form.exercises.length > 0 && (
-        <div className="mb-4">
-          <div className="flex items-center justify-between mb-2 flex-wrap gap-1">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
-              Esercizi selezionati ({form.exercises.length}/{MAX_FOCUS_EXERCISES})
-            </p>
-            <p className="text-xs font-semibold text-emerald-400">Durata totale: {totalMinutes} min</p>
-          </div>
-          <div className="space-y-2">
-            {form.exercises.map((ex, i) => (
-              <div key={ex.id || i} className="rounded-xl border border-white/10 p-2.5 flex items-center gap-3">
-                <span className="text-xs font-bold text-slate-500 w-4 shrink-0 text-center">{i + 1}</span>
-                {ex.image && (
-                  <button type="button" onClick={() => setLightboxSrc(ex.image)} className="shrink-0">
-                    <img src={ex.thumbnail || ex.image} alt={ex.title} className="w-10 h-10 object-cover rounded-lg" />
-                  </button>
-                )}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {ex.type && <Badge className={EXERCISE_TYPE_STYLES[ex.type] || EXERCISE_TYPE_STYLES.Tecnica}>{ex.type}</Badge>}
-                    <span className="text-sm font-semibold text-slate-100">{ex.title}</span>
-                    <span className="text-[11px] text-slate-500">· {ex.time || "--"}</span>
-                  </div>
-                  {ex.goal && <p className="text-[11px] text-slate-500 italic truncate">Obiettivo: {ex.goal}</p>}
-                </div>
-                <button
-                  onClick={() => cycleStation(i)}
-                  className={`shrink-0 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${
-                    ex.station ? STATION_COLORS[ex.station] : "border-white/10 text-slate-500 hover:text-slate-300"
-                  }`}
-                  title="Segna come stazione in parallelo con altri esercizi (es. più stazioni contemporanee sul campo)"
-                >
-                  {ex.station ? `Stazione ${ex.station}` : "Stazioni"}
-                </button>
-                <div className="flex items-center gap-0.5 shrink-0">
-                  <button onClick={() => moveExercise(i, -1)} disabled={i === 0} className="text-slate-400 hover:text-slate-200 p-1 disabled:opacity-20" title="Sposta su">
-                    <ChevronUp className="w-3.5 h-3.5" />
-                  </button>
-                  <button onClick={() => moveExercise(i, 1)} disabled={i === form.exercises.length - 1} className="text-slate-400 hover:text-slate-200 p-1 disabled:opacity-20" title="Sposta giù">
-                    <ChevronDown className="w-3.5 h-3.5" />
-                  </button>
-                  <button onClick={() => removeExercise(i)} className="text-rose-400 p-1" title="Rimuovi dal Focus">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+          {form.exercises.length > 0 ? (
+            <div>
+              <div className="flex items-center justify-between mb-2 flex-wrap gap-1">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
+                  Esercizi selezionati ({form.exercises.length}/{MAX_FOCUS_EXERCISES})
+                </p>
+                <p className="text-xs font-semibold text-emerald-400">Durata totale: {totalMinutes} min</p>
               </div>
+              <div className="space-y-2">
+                {form.exercises.map((ex, i) => (
+                  <div key={ex.id || i} className="rounded-xl border border-white/10 p-2.5 flex items-center gap-3 flex-wrap">
+                    <span className="text-xs font-bold text-slate-500 w-4 shrink-0 text-center">{i + 1}</span>
+                    {ex.image && (
+                      <button type="button" onClick={() => setLightboxSrc(ex.image)} className="shrink-0">
+                        <img src={ex.thumbnail || ex.image} alt={ex.title} className="w-10 h-10 object-cover rounded-lg" />
+                      </button>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {ex.type && <Badge className={EXERCISE_TYPE_STYLES[ex.type] || EXERCISE_TYPE_STYLES.Tecnica}>{ex.type}</Badge>}
+                        <span className="text-sm font-semibold text-slate-100">{ex.title}</span>
+                        <span className="text-[11px] text-slate-500">· {ex.time || "--"}</span>
+                      </div>
+                      {ex.goal && <p className="text-[11px] text-slate-500 italic truncate">Obiettivo: {ex.goal}</p>}
+                    </div>
+                    <button
+                      onClick={() => cycleStation(i)}
+                      className={`shrink-0 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${
+                        ex.station ? STATION_COLORS[ex.station] : "border-white/10 text-slate-500 hover:text-slate-300"
+                      }`}
+                      title="Segna come stazione in parallelo con altri esercizi (es. più stazioni contemporanee sul campo)"
+                    >
+                      {ex.station ? `Stazione ${ex.station}` : "Stazioni"}
+                    </button>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      <button onClick={() => moveExercise(i, -1)} disabled={i === 0} className="text-slate-400 hover:text-slate-200 p-1 disabled:opacity-20" title="Sposta su">
+                        <ChevronUp className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => moveExercise(i, 1)} disabled={i === form.exercises.length - 1} className="text-slate-400 hover:text-slate-200 p-1 disabled:opacity-20" title="Sposta giù">
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => removeExercise(i)} className="text-rose-400 p-1" title="Rimuovi dal Focus">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <EmptyState icon={Target} text="Nessun esercizio ancora selezionato: scegli dalla libreria qui a fianco." />
+          )}
+        </div>
+
+        {/* COLONNA DESTRA: libreria esercizi da cui scegliere, su sfondo scuro per differenziarla */}
+        <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-4">
+          <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Aggiungi dalla libreria Esercizi</p>
+            <button
+              onClick={() => setShowCreateExercise(true)}
+              className="text-emerald-400 text-xs font-medium flex items-center gap-1"
+            >
+              <Plus className="w-3.5 h-3.5" /> Non lo trovi? Crea nuovo esercizio
+            </button>
+          </div>
+
+          <div className="relative mb-2">
+            <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Cerca esercizio per titolo o obiettivo..."
+              className={inputClass + " pl-9"}
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 mb-3">
+            {["Tutti", ...config.exerciseTypes].map((t) => (
+              <button
+                key={t}
+                onClick={() => setTypeFilter(t)}
+                className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-medium border transition-colors ${
+                  typeFilter === t ? "bg-emerald-500 text-slate-950 border-emerald-500" : "border-white/10 text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                {t}
+              </button>
             ))}
           </div>
+
+          <div className="rounded-xl border border-white/10 bg-slate-900/60 max-h-[28rem] overflow-y-auto divide-y divide-white/5">
+            {filteredLibrary.length === 0 ? (
+              <p className="text-xs text-slate-500 text-center py-6">
+                {(standaloneExercises || []).length === 0
+                  ? "Nessun esercizio in libreria: creane uno con il pulsante qui sopra."
+                  : "Nessun esercizio trovato per questa ricerca."}
+              </p>
+            ) : (
+              filteredLibrary.map((ex) => {
+                const alreadyAdded = selectedSourceIds.has(ex.id);
+                return (
+                  <button
+                    key={ex.id}
+                    type="button"
+                    onClick={() => addExistingExercise(ex)}
+                    disabled={alreadyAdded || form.exercises.length >= MAX_FOCUS_EXERCISES}
+                    className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {ex.image ? (
+                      <img src={ex.thumbnail || ex.image} alt={ex.title} className="w-9 h-9 object-cover rounded-lg shrink-0" />
+                    ) : (
+                      <div className="w-9 h-9 rounded-lg bg-white/5 shrink-0" />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {ex.type && <Badge className={EXERCISE_TYPE_STYLES[ex.type] || EXERCISE_TYPE_STYLES.Tecnica}>{ex.type}</Badge>}
+                        <span className="text-sm text-slate-200 truncate">{ex.title}</span>
+                      </div>
+                    </div>
+                    <span className="text-[11px] text-slate-500 shrink-0">{alreadyAdded ? "Già aggiunto" : ex.time || "--"}</span>
+                  </button>
+                );
+              })
+            )}
+          </div>
         </div>
-      )}
-
-      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Aggiungi dalla libreria Esercizi</p>
-        <button
-          onClick={() => setShowCreateExercise(true)}
-          className="text-emerald-400 text-xs font-medium flex items-center gap-1"
-        >
-          <Plus className="w-3.5 h-3.5" /> Non lo trovi? Crea nuovo esercizio
-        </button>
-      </div>
-
-      <div className="relative mb-2">
-        <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Cerca esercizio per titolo o obiettivo..."
-          className={inputClass + " pl-9"}
-        />
-      </div>
-      <div className="flex flex-wrap items-center gap-1.5 mb-3">
-        {["Tutti", ...config.exerciseTypes].map((t) => (
-          <button
-            key={t}
-            onClick={() => setTypeFilter(t)}
-            className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-medium border transition-colors ${
-              typeFilter === t ? "bg-emerald-500 text-slate-950 border-emerald-500" : "border-white/10 text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
-
-      <div className="rounded-xl border border-white/10 max-h-64 overflow-y-auto divide-y divide-white/5 mb-4">
-        {filteredLibrary.length === 0 ? (
-          <p className="text-xs text-slate-500 text-center py-6">
-            {(standaloneExercises || []).length === 0
-              ? "Nessun esercizio in libreria: creane uno con il pulsante qui sopra."
-              : "Nessun esercizio trovato per questa ricerca."}
-          </p>
-        ) : (
-          filteredLibrary.map((ex) => {
-            const alreadyAdded = selectedSourceIds.has(ex.id);
-            return (
-              <button
-                key={ex.id}
-                type="button"
-                onClick={() => addExistingExercise(ex)}
-                disabled={alreadyAdded || form.exercises.length >= MAX_FOCUS_EXERCISES}
-                className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {ex.image ? (
-                  <img src={ex.thumbnail || ex.image} alt={ex.title} className="w-9 h-9 object-cover rounded-lg shrink-0" />
-                ) : (
-                  <div className="w-9 h-9 rounded-lg bg-white/5 shrink-0" />
-                )}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {ex.type && <Badge className={EXERCISE_TYPE_STYLES[ex.type] || EXERCISE_TYPE_STYLES.Tecnica}>{ex.type}</Badge>}
-                    <span className="text-sm text-slate-200 truncate">{ex.title}</span>
-                  </div>
-                </div>
-                <span className="text-[11px] text-slate-500 shrink-0">{alreadyAdded ? "Già aggiunto" : ex.time || "--"}</span>
-              </button>
-            );
-          })
-        )}
       </div>
 
       <Modal open={showCreateExercise} onClose={() => setShowCreateExercise(false)} title="Nuovo Esercizio Singolo" wide>
@@ -8422,6 +8480,51 @@ function downloadFocusSheet(ft) {
     body += `</div>`;
   });
   downloadPrintableHTML(`focus-${ft.title || "senza-titolo"}.html`, `Focus Tecnico — ${ft.title || ""}`, body, 1100);
+}
+
+// Blocco HTML condiviso per un singolo esercizio all'interno di una scheda
+// multi-esercizio (Categoria o PlayBook completo): immagine a piena larghezza
+// seguita dai dettagli, con interruzione di pagina prima di ogni esercizio
+// tranne il primo, per avere un esercizio per pagina in stampa.
+function exerciseBlockHtml(ex, indexLabel, isFirst) {
+  let block = `<div style="page-break-inside: avoid; ${isFirst ? "" : "page-break-before: always;"} margin-top: ${isFirst ? "0" : "24px"};">`;
+  if (ex.image) {
+    block += `<img src="${ex.image}" alt="${ex.title || ""}" style="display:block; width: calc(100% + 32px); margin: 0 -16px 10px -16px; object-fit: contain;" />`;
+  }
+  block += `<h2>${indexLabel}. ${ex.title || "Esercizio"}</h2>`;
+  block += `<p><span class="badge">${ex.type || "Tecnica"}</span> <strong>Tempo:</strong> ${ex.time || "--"}${ex.category ? ` · ${ex.category}` : ""}</p>`;
+  if (ex.goal) block += `<p><strong>Obiettivo:</strong> ${ex.goal}</p>`;
+  if (ex.description) block += `<p>${ex.description}</p>`;
+  block += `</div>`;
+  return block;
+}
+
+// Scarica tutti gli esercizi di una singola tipologia (es. tutti quelli "Tecnica").
+function downloadCategorySheet(typeLabel, items) {
+  let body = `<h1 style="margin-top:0;">Categoria: ${typeLabel}</h1><p>${items.length} esercizi</p>`;
+  items.forEach((ex, i) => {
+    body += exerciseBlockHtml(ex, i + 1, i === 0);
+  });
+  downloadPrintableHTML(`categoria-${typeLabel}.html`, `Categoria — ${typeLabel}`, body, 1100);
+}
+
+// Scarica l'intero PlayBook: tutti gli esercizi presenti, raggruppati per
+// tipologia nello stesso ordine mostrato nella schermata PlayBook.
+function downloadPlayBookSheet(allExercises, typesOrder) {
+  let body = `<h1 style="margin-top:0;">PlayBook completo</h1><p>${allExercises.length} esercizi totali</p>`;
+  let counter = 0;
+  let firstBlock = true;
+  (typesOrder || []).forEach((type) => {
+    const items = allExercises.filter((ex) => (ex.type || "ND") === type);
+    if (items.length === 0) return;
+    body += `<h1 style="${firstBlock ? "" : "page-break-before: always;"} margin-top: 32px;">${type}</h1>`;
+    items.forEach((ex) => {
+      counter += 1;
+      body += exerciseBlockHtml(ex, counter, true);
+    });
+    firstBlock = false;
+  });
+  downloadPrintableHTML("playbook-completo.html", "PlayBook completo", body, 1100);
 }
 
 // Visualizzatore "esploso" di un Focus Tecnico: mostra un esercizio alla volta
