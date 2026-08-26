@@ -3665,20 +3665,29 @@ function FocusTecniciSection({ focusTecnici, onSave, onDelete, exercises, onSave
                     onClick={async () => {
                       const withImages = (ft.exercises || []).filter((ex) => ex.image);
                       if (withImages.length === 0) return showToast?.("Nessuna immagine presente in questo Focus", "error");
-                      const files = withImages.map((ex, i) =>
+                      const summaryFile = dataUrlToFile(generateFocusSummaryImage(ft), "0-riepilogo-focus.png");
+                      const exerciseFiles = withImages.map((ex, i) =>
                         dataUrlToFile(ex.image, `${(ex.title || `esercizio-${i + 1}`).replace(/[^a-z0-9]+/gi, "-")}.jpg`)
                       );
+                      const files = [summaryFile, ...exerciseFiles];
                       const shared = await shareFilesNative(files, { title: ft.title, text: ft.title });
                       if (!shared) {
+                        const baseName = (ft.title || "focus").replace(/[^a-z0-9]+/gi, "-");
+                        const a0 = document.createElement("a");
+                        a0.href = generateFocusSummaryImage(ft);
+                        a0.download = `${baseName}-0-riepilogo.png`;
+                        document.body.appendChild(a0);
+                        a0.click();
+                        document.body.removeChild(a0);
                         withImages.forEach((ex, i) => {
                           setTimeout(() => {
                             const a = document.createElement("a");
                             a.href = ex.image;
-                            a.download = `${(ft.title || "focus").replace(/[^a-z0-9]+/gi, "-")}-${i + 1}.jpg`;
+                            a.download = `${baseName}-${i + 1}.jpg`;
                             document.body.appendChild(a);
                             a.click();
                             document.body.removeChild(a);
-                          }, i * 350);
+                          }, (i + 1) * 350);
                         });
                         openWhatsAppFallback(`${ft.title || "Focus Tecnico"} — allega le immagini appena scaricate`);
                         showToast?.("Condivisione diretta non disponibile: immagini scaricate, allegale su WhatsApp manualmente.", "error");
@@ -7456,25 +7465,35 @@ function FocusDetailViewer({ focus, onClose, showToast }) {
   function downloadAllImages() {
     const withImages = exercisesWithContent.filter((ex) => ex.image);
     if (withImages.length === 0) return showToast?.("Nessuna immagine presente in questo Focus", "error");
+    const baseName = (focus.title || "focus").replace(/[^a-z0-9]+/gi, "-");
+    const summaryUrl = generateFocusSummaryImage(focus);
+    const a0 = document.createElement("a");
+    a0.href = summaryUrl;
+    a0.download = `${baseName}-0-riepilogo.png`;
+    document.body.appendChild(a0);
+    a0.click();
+    document.body.removeChild(a0);
     withImages.forEach((ex, i) => {
       setTimeout(() => {
         const a = document.createElement("a");
         a.href = ex.image;
-        a.download = `${(focus.title || "focus").replace(/[^a-z0-9]+/gi, "-")}-${i + 1}-${(ex.title || "esercizio").replace(/[^a-z0-9]+/gi, "-")}.jpg`;
+        a.download = `${baseName}-${i + 1}-${(ex.title || "esercizio").replace(/[^a-z0-9]+/gi, "-")}.jpg`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-      }, i * 350); // piccolo intervallo tra un download e l'altro: alcuni browser bloccano download multipli simultanei
+      }, (i + 1) * 350); // piccolo intervallo tra un download e l'altro: alcuni browser bloccano download multipli simultanei
     });
-    showToast?.(`Download di ${withImages.length} immagini avviato`);
+    showToast?.(`Download di ${withImages.length + 1} file avviato (riepilogo + immagini)`);
   }
 
   async function shareAllImages() {
     const withImages = exercisesWithContent.filter((ex) => ex.image);
     if (withImages.length === 0) return showToast?.("Nessuna immagine presente in questo Focus", "error");
-    const files = withImages.map((ex, i) =>
+    const summaryFile = dataUrlToFile(generateFocusSummaryImage(focus), "0-riepilogo-focus.png");
+    const exerciseFiles = withImages.map((ex, i) =>
       dataUrlToFile(ex.image, `${(ex.title || `esercizio-${i + 1}`).replace(/[^a-z0-9]+/gi, "-")}.jpg`)
     );
+    const files = [summaryFile, ...exerciseFiles];
     const shared = await shareFilesNative(files, { title: focus.title, text: focus.title });
     if (!shared) {
       downloadAllImages();
@@ -7603,6 +7622,62 @@ function DossierPreviewModal({ doc, onClose, showToast }) {
       </div>
     </div>
   );
+}
+
+// Genera un'immagine di riepilogo del Focus Tecnico (titolo, durata totale ed
+// elenco esercizi con tipo/tempo/obiettivo) da anteporre alle immagini quando
+// si condivide o si scarica l'intera sessione: chi riceve vede subito di cosa
+// si tratta prima delle singole foto degli esercizi.
+function generateFocusSummaryImage(focus) {
+  const exercisesList = focus.exercises || [];
+  const width = 900;
+  const padding = 44;
+  const headerHeight = 120;
+  const rowHeights = exercisesList.map((ex) => (ex.goal ? 74 : 50));
+  const height = headerHeight + rowHeights.reduce((a, b) => a + b, 0) + padding * 2;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = Math.max(height, 260);
+  const ctx = canvas.getContext("2d");
+
+  ctx.fillStyle = "#0f172a";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = "#f1f5f9";
+  ctx.font = "bold 34px Arial, sans-serif";
+  ctx.fillText(focus.title || "Focus Tecnico", padding, 58);
+
+  ctx.fillStyle = "#34d399";
+  ctx.font = "600 19px Arial, sans-serif";
+  ctx.fillText(`Durata totale: ${totalFocusMinutes(focus)} min · ${exercisesList.length} esercizi`, padding, 88);
+
+  ctx.strokeStyle = "rgba(255,255,255,0.15)";
+  ctx.beginPath();
+  ctx.moveTo(padding, 104);
+  ctx.lineTo(width - padding, 104);
+  ctx.stroke();
+
+  let y = headerHeight + padding - 30;
+  exercisesList.forEach((ex, i) => {
+    ctx.fillStyle = "#34d399";
+    ctx.font = "bold 21px Arial, sans-serif";
+    ctx.fillText(`${i + 1}. ${ex.title || "Esercizio"}`, padding, y);
+
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "16px Arial, sans-serif";
+    ctx.fillText(`${ex.type || "Tecnica"} · ${ex.time || "--"}`, padding, y + 25);
+
+    if (ex.goal) {
+      ctx.fillStyle = "#cbd5e1";
+      ctx.font = "italic 15px Arial, sans-serif";
+      ctx.fillText(`Obiettivo: ${ex.goal}`, padding, y + 48);
+    }
+
+    y += rowHeights[i];
+  });
+
+  return canvas.toDataURL("image/png");
 }
 
 // Overlay per ingrandire un'immagine con pulsante di download
