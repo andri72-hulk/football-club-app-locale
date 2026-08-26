@@ -4016,10 +4016,10 @@ function TrainingsSection({ season, updateSeason, library, updateLibrary, showTo
   }
 
   // Usati dal PlayBook: aggiungere un esercizio a un Focus già esistente
-  // (se ha ancora spazio libero, max 6) oppure crearne uno nuovo al volo.
+  // (se ha ancora spazio libero, max 8) oppure crearne uno nuovo al volo.
   function addExerciseToFocus(focusId, ex) {
     const target = focusTecnici.find((f) => f.id === focusId);
-    if (!target || (target.exercises || []).length >= 6) return;
+    if (!target || (target.exercises || []).length >= 8) return;
     saveFocusTecnico({ ...target, exercises: [...(target.exercises || []), { ...ex, id: uid("ex"), sourceExerciseId: ex.id }] });
     showToast(`Aggiunto a "${target.title}"`);
   }
@@ -4302,6 +4302,7 @@ function FocusTecniciSection({ focusTecnici, onSave, onDelete, exercises, onSave
                         <span className="text-emerald-400 font-semibold shrink-0">{ex.title || "Esercizio"}</span>
                         <span className="text-slate-600">·</span>
                         <span className="shrink-0">{ex.time || "--"}</span>
+                        {ex.station && <Badge className={STATION_COLORS[ex.station]}>Stazione {ex.station}</Badge>}
                       </div>
                       {ex.goal && <p className="text-[11px] text-slate-500 italic">Obiettivo: {ex.goal}</p>}
                     </div>
@@ -4594,7 +4595,7 @@ function PlayBookViewer({ exercises, index, onIndexChange, onClose, onSaveExerci
             <>
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide pt-2">Oppure aggiungi a un Focus esistente</p>
               {focusTecnici.map((ft) => {
-                const full = (ft.exercises || []).length >= 6;
+                const full = (ft.exercises || []).length >= 8;
                 return (
                   <button
                     key={ft.id}
@@ -4606,7 +4607,7 @@ function PlayBookViewer({ exercises, index, onIndexChange, onClose, onSaveExerci
                     className="w-full flex items-center justify-between gap-2 rounded-xl border border-white/10 hover:bg-white/5 px-3 py-2.5 text-sm text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <span className="truncate">{ft.title || "Senza titolo"}</span>
-                    <span className="text-[11px] text-slate-500 shrink-0">{full ? "Pieno (6/6)" : `${(ft.exercises || []).length}/6`}</span>
+                    <span className="text-[11px] text-slate-500 shrink-0">{full ? "Pieno (8/8)" : `${(ft.exercises || []).length}/8`}</span>
                   </button>
                 );
               })}
@@ -4925,6 +4926,15 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
   );
 }
 
+const STATION_LETTERS = ["A", "B", "C", "D"];
+const STATION_COLORS = {
+  A: "bg-amber-500/20 text-amber-300 border-amber-500/40",
+  B: "bg-purple-500/20 text-purple-300 border-purple-500/40",
+  C: "bg-pink-500/20 text-pink-300 border-pink-500/40",
+  D: "bg-cyan-500/20 text-cyan-300 border-cyan-500/40",
+};
+const MAX_FOCUS_EXERCISES = 8;
+
 function FocusTecnicoForm({ initial, onSubmit, onCancel, standaloneExercises, onCreateExercise }) {
   const config = useConfig();
   const [form, setForm] = useState(initial);
@@ -4934,6 +4944,7 @@ function FocusTecnicoForm({ initial, onSubmit, onCancel, standaloneExercises, on
   const [lightboxSrc, setLightboxSrc] = useState(null);
 
   const selectedSourceIds = new Set(form.exercises.map((ex) => ex.sourceExerciseId).filter(Boolean));
+  const totalMinutes = form.exercises.reduce((sum, ex) => sum + parseMinutes(ex.time), 0);
 
   const filteredLibrary = (standaloneExercises || [])
     .filter((ex) => ex.title)
@@ -4946,7 +4957,7 @@ function FocusTecnicoForm({ initial, onSubmit, onCancel, standaloneExercises, on
     .sort((a, b) => (a.type || "Tecnica").localeCompare(b.type || "Tecnica", "it") || a.title.localeCompare(b.title, "it"));
 
   function addExistingExercise(source) {
-    if (form.exercises.length >= 6 || selectedSourceIds.has(source.id)) return;
+    if (form.exercises.length >= MAX_FOCUS_EXERCISES || selectedSourceIds.has(source.id)) return;
     setForm({ ...form, exercises: [...form.exercises, { ...source, id: uid("ex"), sourceExerciseId: source.id }] });
   }
 
@@ -4962,9 +4973,21 @@ function FocusTecnicoForm({ initial, onSubmit, onCancel, standaloneExercises, on
     setForm({ ...form, exercises });
   }
 
+  // Cicla l'assegnazione "stazione" di un esercizio: nessuna -> A -> B -> C -> D -> nessuna.
+  // Serve a segnalare quando 2+ esercizi vengono svolti in parallelo su stazioni diverse
+  // del campo, invece che in sequenza uno dopo l'altro.
+  function cycleStation(idx) {
+    const exercises = [...form.exercises];
+    const current = exercises[idx].station;
+    const currentPos = STATION_LETTERS.indexOf(current);
+    const next = currentPos === -1 ? STATION_LETTERS[0] : currentPos === STATION_LETTERS.length - 1 ? null : STATION_LETTERS[currentPos + 1];
+    exercises[idx] = { ...exercises[idx], station: next };
+    setForm({ ...form, exercises });
+  }
+
   function handleNewExerciseCreated(newEx) {
     onCreateExercise(newEx); // salva nella libreria Esercizi Singoli
-    if (form.exercises.length < 6) {
+    if (form.exercises.length < MAX_FOCUS_EXERCISES) {
       setForm((f) => ({ ...f, exercises: [...f.exercises, { ...newEx, id: uid("ex"), sourceExerciseId: newEx.id }] }));
     }
     setShowCreateExercise(false);
@@ -4990,10 +5013,16 @@ function FocusTecnicoForm({ initial, onSubmit, onCancel, standaloneExercises, on
 
       {form.exercises.length > 0 && (
         <div className="mb-4">
-          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Esercizi selezionati ({form.exercises.length}/6)</p>
+          <div className="flex items-center justify-between mb-2 flex-wrap gap-1">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
+              Esercizi selezionati ({form.exercises.length}/{MAX_FOCUS_EXERCISES})
+            </p>
+            <p className="text-xs font-semibold text-emerald-400">Durata totale: {totalMinutes} min</p>
+          </div>
           <div className="space-y-2">
             {form.exercises.map((ex, i) => (
               <div key={ex.id || i} className="rounded-xl border border-white/10 p-2.5 flex items-center gap-3">
+                <span className="text-xs font-bold text-slate-500 w-4 shrink-0 text-center">{i + 1}</span>
                 {ex.image && (
                   <button type="button" onClick={() => setLightboxSrc(ex.image)} className="shrink-0">
                     <img src={ex.thumbnail || ex.image} alt={ex.title} className="w-10 h-10 object-cover rounded-lg" />
@@ -5007,6 +5036,15 @@ function FocusTecnicoForm({ initial, onSubmit, onCancel, standaloneExercises, on
                   </div>
                   {ex.goal && <p className="text-[11px] text-slate-500 italic truncate">Obiettivo: {ex.goal}</p>}
                 </div>
+                <button
+                  onClick={() => cycleStation(i)}
+                  className={`shrink-0 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${
+                    ex.station ? STATION_COLORS[ex.station] : "border-white/10 text-slate-500 hover:text-slate-300"
+                  }`}
+                  title="Segna come stazione in parallelo con altri esercizi (es. più stazioni contemporanee sul campo)"
+                >
+                  {ex.station ? `Stazione ${ex.station}` : "Stazioni"}
+                </button>
                 <div className="flex items-center gap-0.5 shrink-0">
                   <button onClick={() => moveExercise(i, -1)} disabled={i === 0} className="text-slate-400 hover:text-slate-200 p-1 disabled:opacity-20" title="Sposta su">
                     <ChevronUp className="w-3.5 h-3.5" />
@@ -5072,7 +5110,7 @@ function FocusTecnicoForm({ initial, onSubmit, onCancel, standaloneExercises, on
                 key={ex.id}
                 type="button"
                 onClick={() => addExistingExercise(ex)}
-                disabled={alreadyAdded || form.exercises.length >= 6}
+                disabled={alreadyAdded || form.exercises.length >= MAX_FOCUS_EXERCISES}
                 className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {ex.image ? (
