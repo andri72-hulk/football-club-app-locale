@@ -1554,6 +1554,52 @@ function SectionResetButton({ label = "Azzera", confirmText = "Confermi l'azzera
    APP PRINCIPALE
    ============================================================ */
 
+function formatTime(d) {
+  if (!d) return null;
+  return d.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+// Indicatore in alto a destra: mostra a colpo d'occhio se l'ultimo salvataggio
+// è andato a buon fine e a che ora, distinguendo salvataggio locale (IndexedDB)
+// e aggiornamento del file di sincronizzazione (se collegato).
+function SaveStatusIndicator({ saving, storageHealthy, lastSavedAt, syncHandle, lastFileSyncAt }) {
+  let icon, label, colorClass;
+  if (saving) {
+    icon = <RefreshCw className="w-3.5 h-3.5 animate-spin" />;
+    label = "Salvataggio...";
+    colorClass = "border-amber-500/30 bg-amber-500/10 text-amber-300";
+  } else if (!storageHealthy) {
+    icon = <AlertCircle className="w-3.5 h-3.5" />;
+    label = "Non salvato";
+    colorClass = "border-rose-500/30 bg-rose-500/10 text-rose-300";
+  } else {
+    icon = <CheckCircle2 className="w-3.5 h-3.5" />;
+    label = lastSavedAt ? `Salvato ${formatTime(lastSavedAt)}` : "Salvato";
+    colorClass = "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+  }
+
+  const tooltipLines = [
+    lastSavedAt ? `Ultimo salvataggio locale: ${formatTime(lastSavedAt)}` : "Nessun salvataggio locale ancora effettuato",
+  ];
+  if (syncHandle) {
+    tooltipLines.push(
+      lastFileSyncAt
+        ? `File sincronizzato aggiornato: ${formatTime(lastFileSyncAt)}`
+        : "File di sincronizzazione collegato, in attesa del primo aggiornamento"
+    );
+  }
+
+  return (
+    <div
+      title={tooltipLines.join("\n")}
+      className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium shrink-0 ${colorClass}`}
+    >
+      {icon}
+      <span className="hidden sm:inline">{label}</span>
+    </div>
+  );
+}
+
 export default function FootballClubApp() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1566,6 +1612,8 @@ export default function FootballClubApp() {
   const [syncHandle, setSyncHandle] = useState(null);
   const [syncFileName, setSyncFileName] = useState(null);
   const [syncNeedsPermission, setSyncNeedsPermission] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState(null);
+  const [lastFileSyncAt, setLastFileSyncAt] = useState(null);
   const [tab, setTab] = useState("dashboard");
   const [playersView, setPlayersView] = useState("grid"); // 'grid' | 'board'
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -1632,13 +1680,16 @@ export default function FootballClubApp() {
                 const localTime = data?.savedAt ? new Date(data.savedAt).getTime() : 0;
                 if (fileTime > localTime) {
                   data = fileData;
+                  setLastFileSyncAt(new Date(fileTime));
                 } else if (data && localTime >= fileTime) {
                   // I dati locali sono più recenti (o identici): riallineiamo il file.
                   await writeSyncFile(handle, data).catch(() => {});
+                  setLastFileSyncAt(new Date());
                 }
               } else if (data) {
                 // File vuoto/nuovo: lo inizializziamo con i dati locali correnti.
                 await writeSyncFile(handle, data).catch(() => {});
+                setLastFileSyncAt(new Date());
               }
             } else {
               setSyncNeedsPermission(true);
@@ -1651,6 +1702,7 @@ export default function FootballClubApp() {
         if (data && data.seasons && data.seasons.length > 0) {
           setSeasons(data.seasons);
           setActiveSeasonId(data.activeSeasonId || data.seasons[0].id);
+          if (data.savedAt) setLastSavedAt(new Date(data.savedAt));
 
           if (data.library) {
             // Assicura che eventuali voci aggiunte in versioni successive (es. categorie)
@@ -1760,12 +1812,15 @@ export default function FootballClubApp() {
           if (!wasHealthy) showToast("Salvataggio automatico ripristinato");
           return true;
         });
+        setLastSavedAt(new Date());
         // Se un file di sincronizzazione è collegato, lo aggiorniamo in parallelo
         // (best-effort: un eventuale errore qui non blocca il salvataggio principale).
         if (syncHandle) {
-          writeSyncFile(syncHandle, JSON.parse(payload)).catch(() => {
-            setSyncNeedsPermission(true);
-          });
+          writeSyncFile(syncHandle, JSON.parse(payload))
+            .then(() => setLastFileSyncAt(new Date()))
+            .catch(() => {
+              setSyncNeedsPermission(true);
+            });
         }
       }
       setSaving(false);
@@ -1782,6 +1837,7 @@ export default function FootballClubApp() {
       setSyncHandle(handle);
       setSyncFileName(handle.name);
       setSyncNeedsPermission(false);
+      setLastFileSyncAt(new Date());
       showToast("File di sincronizzazione creato e collegato");
     } catch (e) {
       if (e?.name !== "AbortError") showToast("Impossibile creare il file di sincronizzazione", "error");
@@ -1975,6 +2031,13 @@ export default function FootballClubApp() {
                 <RefreshCw className={`w-3.5 h-3.5 ${saving ? "animate-spin" : ""}`} /> Riprova salvataggio
               </button>
             )}
+            <SaveStatusIndicator
+              saving={saving}
+              storageHealthy={storageHealthy}
+              lastSavedAt={lastSavedAt}
+              syncHandle={syncHandle}
+              lastFileSyncAt={lastFileSyncAt}
+            />
             <div
               title={
                 !storageHealthy
