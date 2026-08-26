@@ -16,7 +16,7 @@ import {
   XCircle, AlertCircle, HeartPulse, Target, Zap, FileSpreadsheet, FileText,
   ArrowLeftRight, Award, Flag, UserCheck, UserX, Menu, ChevronDown, ChevronUp,
   TrendingUp, RefreshCw, Info, LayoutGrid, Handshake, StickyNote, SlidersHorizontal,
-  Eye, Maximize2, Share2
+  Eye, Maximize2, Share2, Sun, Moon
 } from "lucide-react";
 
 /* ============================================================
@@ -1192,6 +1192,53 @@ function formatDateTime(iso) {
   return `${d.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" })} alle ${d.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" })}`;
 }
 
+// Promemoria di backup manuale: dato che la sincronizzazione tra dispositivi
+// diversi da questo (es. il cellulare) richiede un Esporta/Importa JSON
+// manuale, teniamo traccia in localStorage (non nei dati della stagione, per
+// non "sporcare" il backup stesso) di quando è stato fatto l'ultimo export e
+// se il promemoria è stato rimandato dall'utente.
+const BACKUP_REMINDER_DAYS = 7;
+const LS_LAST_EXPORT_KEY = "football_club_last_export_at";
+const LS_FIRST_USE_KEY = "football_club_first_use_at";
+const LS_BACKUP_SNOOZE_KEY = "football_club_backup_snooze_until";
+
+function getLastExportAt() {
+  try {
+    return localStorage.getItem(LS_LAST_EXPORT_KEY);
+  } catch {
+    return null;
+  }
+}
+function markExportDone() {
+  try {
+    localStorage.setItem(LS_LAST_EXPORT_KEY, new Date().toISOString());
+  } catch {}
+}
+function getOrInitFirstUseAt() {
+  try {
+    let v = localStorage.getItem(LS_FIRST_USE_KEY);
+    if (!v) {
+      v = new Date().toISOString();
+      localStorage.setItem(LS_FIRST_USE_KEY, v);
+    }
+    return v;
+  } catch {
+    return new Date().toISOString();
+  }
+}
+function getBackupSnoozeUntil() {
+  try {
+    return localStorage.getItem(LS_BACKUP_SNOOZE_KEY);
+  } catch {
+    return null;
+  }
+}
+function snoozeBackupReminder(days) {
+  try {
+    localStorage.setItem(LS_BACKUP_SNOOZE_KEY, new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString());
+  } catch {}
+}
+
 function formatDateShort(iso) {
   if (!iso) return "-";
   const d = new Date(iso);
@@ -1608,6 +1655,101 @@ function SaveStatusIndicator({ saving, storageHealthy, lastSavedAt, syncHandle, 
   );
 }
 
+// Ricerca globale: un'unica casella per trovare qualunque cosa nell'app —
+// giocatori, allenamenti, partite, esercizi, focus tecnici, documenti del
+// dossier — senza dover ricordare in quale sezione si trova. Selezionando un
+// risultato si naviga alla sezione giusta (per i giocatori, si apre anche
+// direttamente la scheda del giocatore).
+function GlobalSearchModal({ open, onClose, season, library, onGoTo, onJumpToPlayer }) {
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    if (!open) setQuery("");
+  }, [open]);
+
+  if (!open) return null;
+
+  const q = query.trim().toLowerCase();
+  const results = [];
+
+  if (q) {
+    (season?.players || []).forEach((p) => {
+      if (p.name.toLowerCase().includes(q)) {
+        results.push({ label: p.name, sublabel: p.role || "Giocatore", icon: Users, onSelect: () => onJumpToPlayer(p.id) });
+      }
+    });
+    (season?.trainings || []).forEach((t) => {
+      if ((t.focus || "").toLowerCase().includes(q) || formatDate(t.date).toLowerCase().includes(q)) {
+        results.push({ label: t.focus || "Allenamento", sublabel: `Allenamento · ${formatDate(t.date)}`, icon: Activity, onSelect: () => onGoTo("trainings") });
+      }
+    });
+    (season?.matches || []).forEach((m) => {
+      if ((m.opponent || "").toLowerCase().includes(q)) {
+        results.push({ label: `vs ${m.opponent}`, sublabel: `Partita · ${formatDate(m.date)}`, icon: Trophy, onSelect: () => onGoTo("matches") });
+      }
+    });
+    (library?.exercises || []).forEach((ex) => {
+      if ((ex.title || "").toLowerCase().includes(q)) {
+        results.push({ label: ex.title, sublabel: "Esercizio", icon: Target, onSelect: () => onGoTo("trainings") });
+      }
+    });
+    (season?.focusTecnici || []).forEach((ft) => {
+      if ((ft.title || "").toLowerCase().includes(q)) {
+        results.push({ label: ft.title, sublabel: "Focus Tecnico", icon: Target, onSelect: () => onGoTo("trainings") });
+      }
+    });
+    (library?.dossier || []).forEach((d) => {
+      if ((d.title || "").toLowerCase().includes(q) || (d.fileName || "").toLowerCase().includes(q)) {
+        results.push({ label: d.title, sublabel: `Dossier · ${d.fileName}`, icon: FileText, onSelect: () => onGoTo("dossier") });
+      }
+    });
+  }
+
+  return (
+    <div className="fixed inset-0 z-[110] bg-black/70 backdrop-blur-sm flex items-start justify-center pt-24 px-4" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-slate-900 shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10">
+          <Search className="w-4 h-4 text-slate-500 shrink-0" />
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Cerca giocatori, allenamenti, partite, esercizi, focus, dossier..."
+            className="flex-1 bg-transparent outline-none text-sm text-slate-100 placeholder-slate-500"
+          />
+          <button onClick={onClose} className="rounded-lg p-1 hover:bg-white/10 text-slate-400 shrink-0">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="max-h-96 overflow-y-auto">
+          {!q ? (
+            <p className="text-xs text-slate-500 px-4 py-6 text-center">Inizia a digitare per cercare in tutta l'app.</p>
+          ) : results.length === 0 ? (
+            <p className="text-xs text-slate-500 px-4 py-6 text-center">Nessun risultato per "{query}".</p>
+          ) : (
+            results.slice(0, 30).map((r, i) => (
+              <button
+                key={i}
+                onClick={() => {
+                  r.onSelect();
+                  onClose();
+                }}
+                className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-white/5 text-left"
+              >
+                <r.icon className="w-4 h-4 text-emerald-400 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-sm text-slate-100 truncate">{r.label}</p>
+                  <p className="text-[11px] text-slate-500 truncate">{r.sublabel}</p>
+                </div>
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function FootballClubApp() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1622,14 +1764,43 @@ export default function FootballClubApp() {
   const [syncNeedsPermission, setSyncNeedsPermission] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState(null);
   const [lastFileSyncAt, setLastFileSyncAt] = useState(null);
+  const [backupReminderVisible, setBackupReminderVisible] = useState(false);
+
+  useEffect(() => {
+    if (loading) return;
+    const snooze = getBackupSnoozeUntil();
+    if (snooze && new Date(snooze) > new Date()) {
+      setBackupReminderVisible(false);
+      return;
+    }
+    const reference = getLastExportAt() || getOrInitFirstUseAt();
+    const daysSince = (Date.now() - new Date(reference).getTime()) / (1000 * 60 * 60 * 24);
+    setBackupReminderVisible(daysSince >= BACKUP_REMINDER_DAYS);
+  }, [loading]);
   const [tab, setTab] = useState("dashboard");
   const [playersView, setPlayersView] = useState("grid"); // 'grid' | 'board'
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [jumpToPlayerId, setJumpToPlayerId] = useState(null);
+  const [theme, setTheme] = useState(() => {
+    try {
+      return localStorage.getItem("football_club_theme") || "dark";
+    } catch {
+      return "dark";
+    }
+  });
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("theme-light", theme === "light");
+    try {
+      localStorage.setItem("football_club_theme", theme);
+    } catch {}
+  }, [theme]);
   const [toast, setToast] = useState(null);
 
-  const showToast = useCallback((msg, type = "success") => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 2600);
+  const showToast = useCallback((msg, type = "success", action = null) => {
+    setToast({ msg, type, action });
+    setTimeout(() => setToast(null), action ? 6000 : 2600);
   }, []);
 
   /* ---------- Caricamento iniziale (richiamabile anche da "Riprova") ---------- */
@@ -1987,6 +2158,7 @@ export default function FootballClubApp() {
 
   const NAV_ITEMS = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { id: "calendar", label: "Calendario", icon: Calendar },
     { id: "players", label: "Giocatori", icon: Users },
     { id: "trainings", label: "Allenamenti", icon: Activity },
     { id: "matches", label: "Partite", icon: Trophy },
@@ -2036,6 +2208,20 @@ export default function FootballClubApp() {
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
+              className="rounded-lg p-2 hover:bg-white/10 text-slate-400"
+              title={theme === "light" ? "Passa al tema scuro" : "Passa al tema chiaro"}
+            >
+              {theme === "light" ? <Moon className="w-4.5 h-4.5" /> : <Sun className="w-4.5 h-4.5" />}
+            </button>
+            <button
+              onClick={() => setGlobalSearchOpen(true)}
+              className="rounded-lg p-2 hover:bg-white/10 text-slate-400"
+              title="Cerca in tutta l'app"
+            >
+              <Search className="w-4.5 h-4.5" />
+            </button>
             <SeasonSwitcher
               seasons={seasons}
               activeSeasonId={activeSeasonId}
@@ -2132,7 +2318,7 @@ export default function FootballClubApp() {
 
       {/* NAV MOBILE BOTTOM (comoda per il campo) */}
       <nav className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-slate-900/95 backdrop-blur border-t border-white/10 flex">
-        {NAV_ITEMS.filter((n) => n.id !== "export" && n.id !== "settings" && n.id !== "configurations").map((item) => (
+        {NAV_ITEMS.filter((n) => n.id !== "export" && n.id !== "settings" && n.id !== "configurations" && n.id !== "calendar").map((item) => (
           <button
             key={item.id}
             onClick={() => setTab(item.id)}
@@ -2169,7 +2355,36 @@ export default function FootballClubApp() {
         )}
         {!activeSeason ? (
           <EmptyState icon={Calendar} text="Nessuna stagione configurata." />
-        ) : tab === "dashboard" ? (
+        ) : (
+        <>
+        {storageHealthy && backupReminderVisible && (
+          <div className="mb-5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 flex items-start gap-2.5 flex-wrap">
+            <Save className="w-4.5 h-4.5 text-amber-400 shrink-0 mt-0.5" />
+            <div className="text-xs text-amber-300 flex-1" style={{ minWidth: 200 }}>
+              <p className="font-semibold mb-0.5">Promemoria: fai un backup</p>
+              <p className="text-amber-300/80">
+                Non fai un backup manuale (Esporta JSON) da un po'. Se lavori anche da un altro dispositivo (es. il cellulare), è il momento di allinearli.
+              </p>
+            </div>
+            <div className="flex gap-1.5 shrink-0">
+              <button
+                onClick={() => { snoozeBackupReminder(3); setBackupReminderVisible(false); }}
+                className="flex items-center rounded-lg border border-amber-500/40 bg-transparent hover:bg-amber-500/10 px-3 py-2 text-xs text-amber-300 font-medium"
+              >
+                Ricordamelo tra 3 giorni
+              </button>
+              <button
+                onClick={() => setTab("export")}
+                className="flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/15 hover:bg-amber-500/25 px-3 py-2 text-xs text-amber-200 font-semibold"
+              >
+                <Download className="w-3.5 h-3.5" /> Vai a Esporta Dati
+              </button>
+            </div>
+          </div>
+        )}
+        </>
+        )}
+        {!activeSeason ? null : tab === "dashboard" ? (
           <Dashboard
             season={activeSeason}
             onGoTo={setTab}
@@ -2178,8 +2393,18 @@ export default function FootballClubApp() {
               setTab("players");
             }}
           />
+        ) : tab === "calendar" ? (
+          <CalendarSection season={activeSeason} onGoTo={setTab} />
         ) : tab === "players" ? (
-          <PlayersSection season={activeSeason} updateSeason={updateActiveSeason} showToast={showToast} view={playersView} setView={setPlayersView} />
+          <PlayersSection
+            season={activeSeason}
+            updateSeason={updateActiveSeason}
+            showToast={showToast}
+            view={playersView}
+            setView={setPlayersView}
+            jumpToPlayerId={jumpToPlayerId}
+            onJumpHandled={() => setJumpToPlayerId(null)}
+          />
         ) : tab === "trainings" ? (
           <TrainingsSection season={activeSeason} updateSeason={updateActiveSeason} library={library} updateLibrary={updateLibrary} showToast={showToast} />
         ) : tab === "matches" ? (
@@ -2235,6 +2460,7 @@ export default function FootballClubApp() {
               setLibrary={setLibrary}
               showToast={showToast}
               lastSavedAt={lastSavedAt}
+              onExported={() => setBackupReminderVisible(false)}
             />
           </>
         ) : tab === "configurations" ? (
@@ -2254,15 +2480,38 @@ export default function FootballClubApp() {
         ) : null}
       </main>
 
+      <GlobalSearchModal
+        open={globalSearchOpen}
+        onClose={() => setGlobalSearchOpen(false)}
+        season={activeSeason}
+        library={library}
+        onGoTo={setTab}
+        onJumpToPlayer={(id) => {
+          setJumpToPlayerId(id);
+          setTab("players");
+        }}
+      />
+
       {toast && (
         <div
-          className={`fixed bottom-20 lg:bottom-6 left-1/2 -translate-x-1/2 z-50 rounded-xl px-4 py-3 text-sm font-medium shadow-2xl border ${
+          className={`fixed bottom-20 lg:bottom-6 left-1/2 -translate-x-1/2 z-50 rounded-xl px-4 py-3 text-sm font-medium shadow-2xl border flex items-center gap-3 ${
             toast.type === "error"
               ? "bg-rose-950 border-rose-500/40 text-rose-300"
               : "bg-emerald-950 border-emerald-500/40 text-emerald-300"
           }`}
         >
-          {toast.msg}
+          <span>{toast.msg}</span>
+          {toast.action && (
+            <button
+              onClick={() => {
+                toast.action.onClick();
+                setToast(null);
+              }}
+              className="shrink-0 underline font-semibold hover:opacity-80"
+            >
+              {toast.action.label}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -2671,10 +2920,150 @@ function KpiCard({ icon: Icon, label, value, valueClassName, subtext, subtextCla
 }
 
 /* ============================================================
+   SEZIONE CALENDARIO
+   ============================================================ */
+
+const ITALIAN_MONTHS = ["Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno", "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"];
+const ITALIAN_WEEKDAYS = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"];
+
+function sameDay(a, b) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+// Vista calendario mensile: allenamenti e partite del mese, con un puntino
+// colorato per giorno. Vista di sola consultazione — per aprire il dettaglio
+// di un evento si passa comunque dalle sezioni Allenamenti/Partite.
+function CalendarSection({ season, onGoTo }) {
+  const trainings = season?.trainings || [];
+  const matches = season?.matches || [];
+  const [cursor, setCursor] = useState(() => new Date());
+  const [selectedDay, setSelectedDay] = useState(null);
+
+  const year = cursor.getFullYear();
+  const month = cursor.getMonth();
+
+  const firstOfMonth = new Date(year, month, 1);
+  const startWeekday = (firstOfMonth.getDay() + 6) % 7; // lunedì = 0
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const eventsByDay = useMemo(() => {
+    const map = {};
+    trainings.forEach((t) => {
+      const d = new Date(t.date);
+      if (isNaN(d.getTime())) return;
+      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      (map[key] = map[key] || []).push({ type: "training", data: t, date: d });
+    });
+    matches.forEach((m) => {
+      const d = new Date(m.date);
+      if (isNaN(d.getTime())) return;
+      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      (map[key] = map[key] || []).push({ type: "match", data: m, date: d });
+    });
+    return map;
+  }, [trainings, matches]);
+
+  const cells = [];
+  for (let i = 0; i < startWeekday; i++) cells.push(null);
+  for (let day = 1; day <= daysInMonth; day++) cells.push(day);
+
+  const today = new Date();
+  const selectedEvents = selectedDay ? eventsByDay[`${selectedDay.getFullYear()}-${selectedDay.getMonth()}-${selectedDay.getDate()}`] || [] : [];
+
+  return (
+    <div>
+      <SectionTitle
+        eyebrow="Agenda"
+        title="Calendario"
+        icon={Calendar}
+        action={
+          <div className="flex items-center gap-1.5">
+            <button onClick={() => setCursor(new Date(year, month - 1, 1))} className="rounded-lg p-2 hover:bg-white/10 text-slate-400">
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <p className="text-sm font-bold text-slate-100 w-36 text-center">{ITALIAN_MONTHS[month]} {year}</p>
+            <button onClick={() => setCursor(new Date(year, month + 1, 1))} className="rounded-lg p-2 hover:bg-white/10 text-slate-400">
+              <ChevronRight className="w-4 h-4" />
+            </button>
+            <Button variant="secondary" onClick={() => setCursor(new Date())}>Oggi</Button>
+          </div>
+        }
+      />
+
+      <div className="grid grid-cols-7 gap-1.5 mb-1.5">
+        {ITALIAN_WEEKDAYS.map((w) => (
+          <div key={w} className="text-center text-[11px] font-semibold text-slate-500 uppercase py-1">{w}</div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-7 gap-1.5">
+        {cells.map((day, i) => {
+          if (day === null) return <div key={`empty-${i}`} />;
+          const d = new Date(year, month, day);
+          const key = `${year}-${month}-${day}`;
+          const events = eventsByDay[key] || [];
+          const isToday = sameDay(d, today);
+          return (
+            <button
+              key={key}
+              onClick={() => setSelectedDay(d)}
+              className={`aspect-square rounded-xl border p-1.5 flex flex-col items-center sm:items-start gap-1 text-left transition-colors ${
+                isToday ? "border-emerald-500/50 bg-emerald-500/10" : "border-white/10 hover:bg-white/5"
+              }`}
+            >
+              <span className={`text-xs font-semibold ${isToday ? "text-emerald-400" : "text-slate-300"}`}>{day}</span>
+              <div className="flex flex-wrap gap-1 justify-center sm:justify-start">
+                {events.some((e) => e.type === "training") && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />}
+                {events.some((e) => e.type === "match") && <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center gap-4 mt-4 text-[11px] text-slate-500">
+        <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-400" /> Allenamento</span>
+        <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-sky-400" /> Partita</span>
+      </div>
+
+      <Modal open={!!selectedDay} onClose={() => setSelectedDay(null)} title={selectedDay ? formatDate(selectedDay.toISOString()) : ""}>
+        {selectedEvents.length === 0 ? (
+          <EmptyState icon={Calendar} text="Nessun evento in questo giorno." />
+        ) : (
+          <div className="space-y-2">
+            {selectedEvents.map((e, i) => (
+              <Card key={i} className="p-3">
+                {e.type === "training" ? (
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-emerald-400">Allenamento</p>
+                      <p className="text-xs text-slate-400">{e.data.time || "--"} · {e.data.focus || "Nessun focus indicato"}</p>
+                    </div>
+                    <Button variant="secondary" className="px-2.5 py-1 text-xs" onClick={() => onGoTo("trainings")}>Vai</Button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-sky-400">vs {e.data.opponent}</p>
+                      <p className="text-xs text-slate-400">{e.data.time || "--"} · {e.data.venue || ""}</p>
+                    </div>
+                    <Button variant="secondary" className="px-2.5 py-1 text-xs" onClick={() => onGoTo("matches")}>Vai</Button>
+                  </div>
+                )}
+              </Card>
+            ))}
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+/* ============================================================
    SEZIONE GIOCATORI
    ============================================================ */
 
-function PlayersSection({ season, updateSeason, showToast, view, setView }) {
+function PlayersSection({ season, updateSeason, showToast, view, setView, jumpToPlayerId, onJumpHandled }) {
   const config = useConfig();
   const players = season.players || [];
   const trainings = season.trainings || [];
@@ -2683,6 +3072,14 @@ function PlayersSection({ season, updateSeason, showToast, view, setView }) {
   const [roleFilter, setRoleFilter] = useState("Tutti");
   const [showAdd, setShowAdd] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState(null);
+
+  useEffect(() => {
+    if (!jumpToPlayerId) return;
+    const p = players.find((pl) => pl.id === jumpToPlayerId);
+    if (p) setSelectedPlayer(p);
+    onJumpHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpToPlayerId]);
 
   const filtered = players.filter((p) => {
     const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase());
@@ -2703,12 +3100,20 @@ function PlayersSection({ season, updateSeason, showToast, view, setView }) {
   }
 
   function deletePlayer(id) {
+    const removed = players.find((p) => p.id === id);
     updateSeason((s) => ({ players: (s.players || []).filter((p) => p.id !== id) }));
     setSelectedPlayer(null);
-    showToast("Giocatore rimosso dalla rosa");
+    showToast(
+      `${removed?.name || "Giocatore"} rimosso dalla rosa`,
+      "success",
+      removed
+        ? { label: "Annulla", onClick: () => updateSeason((s) => ({ players: [...(s.players || []), removed] })) }
+        : null
+    );
   }
 
   const [showUnavailable, setShowUnavailable] = useState(false);
+  const [showCompare, setShowCompare] = useState(false);
   const unavailablePlayers = players.filter((p) => ["Infortunato", "Squalificato", "In dubbio"].includes(p.medicalStatus));
 
   return (
@@ -2740,6 +3145,9 @@ function PlayersSection({ season, updateSeason, showToast, view, setView }) {
             >
               <AlertCircle className="w-4 h-4" /> Indisponibili ({unavailablePlayers.length})
             </button>
+            <Button variant="secondary" onClick={() => setShowCompare(true)} disabled={players.length < 2}>
+              <ArrowLeftRight className="w-4 h-4" /> Confronta
+            </Button>
             <Button onClick={() => setShowAdd(true)}>
               <Plus className="w-4 h-4" /> Aggiungi Giocatore
             </Button>
@@ -2910,6 +3318,10 @@ function PlayersSection({ season, updateSeason, showToast, view, setView }) {
           </div>
         )}
       </Modal>
+
+      <Modal open={showCompare} onClose={() => setShowCompare(false)} title="Confronta Giocatori" wide>
+        <PlayerCompareModal players={players} onClose={() => setShowCompare(false)} />
+      </Modal>
     </div>
   );
 }
@@ -2962,6 +3374,100 @@ function PlayersBoard({ players, trainings, matches, onSelect }) {
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+const COMPARE_COLORS = ["#10b981", "#38bdf8", "#f472b6"];
+
+const COMPARE_STAT_GROUPS = [
+  { id: "base", label: "Caratteristiche base", keys: BASE_STAT_KEYS, field: "baseStats" },
+  { id: "mentali", label: "Mentali", keys: MENTAL_STAT_KEYS, field: "mentalStats" },
+  { id: "tecnico", label: "Tecnico/Tattiche", keys: TECH_TACTIC_STAT_KEYS, field: "techTacticStats" },
+  { id: "portiere", label: "Portiere", keys: GK_STAT_KEYS, field: "gkStats" },
+];
+
+// Confronto tra 2-3 giocatori con radar sovrapposti: un solo grafico con una
+// serie colorata per giocatore, per decisioni tattiche a colpo d'occhio.
+function PlayerCompareModal({ players }) {
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [groupId, setGroupId] = useState("base");
+
+  const selectedPlayers = selectedIds.map((id) => players.find((p) => p.id === id)).filter(Boolean);
+  const group = COMPARE_STAT_GROUPS.find((g) => g.id === groupId) || COMPARE_STAT_GROUPS[0];
+
+  function toggleSelect(id) {
+    setSelectedIds((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      if (prev.length >= 3) return prev; // massimo 3 giocatori confrontabili, per leggibilità del grafico
+      return [...prev, id];
+    });
+  }
+
+  const radarData = group.keys.map((s) => {
+    const row = { stat: s.label };
+    selectedPlayers.forEach((p) => {
+      const statsObj = p[group.field] || {};
+      row[p.id] = clampStat(statsObj[s.key]);
+    });
+    return row;
+  });
+
+  return (
+    <div>
+      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Scegli 2 o 3 giocatori</p>
+      <div className="flex flex-wrap gap-1.5 mb-4 max-h-40 overflow-y-auto pr-1">
+        {players.map((p) => {
+          const isSelected = selectedIds.includes(p.id);
+          const colorIdx = selectedIds.indexOf(p.id);
+          return (
+            <button
+              key={p.id}
+              onClick={() => toggleSelect(p.id)}
+              disabled={!isSelected && selectedIds.length >= 3}
+              className={`flex items-center gap-1.5 rounded-full pl-1 pr-3 py-1 text-xs font-medium border transition-colors disabled:opacity-40 ${
+                isSelected ? "border-transparent text-slate-950" : "border-white/10 text-slate-300 hover:text-slate-100"
+              }`}
+              style={isSelected ? { backgroundColor: COMPARE_COLORS[colorIdx] } : {}}
+            >
+              <img src={playerAvatar(p)} alt={p.name} className="w-5 h-5 rounded-full object-cover" />
+              {p.name}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex flex-wrap gap-1.5 mb-4">
+        {COMPARE_STAT_GROUPS.map((g) => (
+          <button
+            key={g.id}
+            onClick={() => setGroupId(g.id)}
+            className={`rounded-full px-3 py-1.5 text-[11px] font-medium border transition-colors ${
+              groupId === g.id ? "bg-sky-500 text-slate-950 border-sky-500" : "border-white/10 text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            {g.label}
+          </button>
+        ))}
+      </div>
+
+      {selectedPlayers.length < 2 ? (
+        <EmptyState icon={ArrowLeftRight} text="Seleziona almeno 2 giocatori per vedere il confronto." />
+      ) : (
+        <div className="h-80">
+          <ResponsiveContainer width="100%" height="100%">
+            <RadarChart data={radarData}>
+              <PolarGrid stroke="rgba(255,255,255,0.1)" />
+              <PolarAngleAxis dataKey="stat" tick={{ fill: "#94a3b8", fontSize: 10 }} />
+              <PolarRadiusAxis domain={[0, 10]} tick={false} axisLine={false} />
+              {selectedPlayers.map((p, i) => (
+                <Radar key={p.id} name={p.name} dataKey={p.id} stroke={COMPARE_COLORS[i]} fill={COMPARE_COLORS[i]} fillOpacity={0.15} />
+              ))}
+              <Legend />
+            </RadarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
     </div>
   );
 }
@@ -3038,8 +3544,8 @@ function PlayerForm({ onSubmit, onCancel, initial }) {
         <Field label="Nome e Cognome">
           <input className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Es. Marco Rossi" />
         </Field>
-        <Field label="Numero di maglia">
-          <input type="number" className={inputClass} value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} placeholder="Es. 10" />
+        <Field label="Numero di maglia (facoltativo)">
+          <input type="number" className={inputClass} value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} placeholder="Lascia vuoto se non assegnato" />
         </Field>
         <Field label="Ruolo principale">
           <select className={inputClass} value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
@@ -3433,8 +3939,15 @@ function TrainingsSection({ season, updateSeason, library, updateLibrary, showTo
   }
 
   function deleteFocusTecnico(id) {
+    const removed = focusTecnici.find((f) => f.id === id);
     updateSeason((s) => ({ focusTecnici: (s.focusTecnici || []).filter((f) => f.id !== id) }));
-    showToast("Focus Tecnico eliminato");
+    showToast(
+      `Focus Tecnico "${removed?.title || ""}" eliminato`,
+      "success",
+      removed
+        ? { label: "Annulla", onClick: () => updateSeason((s) => ({ focusTecnici: [...(s.focusTecnici || []), removed] })) }
+        : null
+    );
   }
 
   function saveExercise(ex) {
@@ -3449,8 +3962,15 @@ function TrainingsSection({ season, updateSeason, library, updateLibrary, showTo
   }
 
   function deleteExercise(id) {
+    const removed = (library.exercises || []).find((e) => e.id === id);
     updateLibrary((lib) => ({ exercises: (lib.exercises || []).filter((e) => e.id !== id) }));
-    showToast("Esercizio eliminato");
+    showToast(
+      `Esercizio "${removed?.title || ""}" eliminato`,
+      "success",
+      removed
+        ? { label: "Annulla", onClick: () => updateLibrary((lib) => ({ exercises: [...(lib.exercises || []), removed] })) }
+        : null
+    );
   }
 
   function updateFocusExercise(focusId, exerciseId, updatedExercise) {
@@ -4673,6 +5193,7 @@ function MatchesSection({ season, updateSeason, showToast }) {
             teamName={season.teamName}
             lineup={season.lineup}
             clubLabel={season.teamName || ""}
+            showToast={showToast}
             onUpdate={(patch) => {
               updateMatch(selected.id, patch);
               setSelected((prev) => ({ ...prev, ...patch }));
@@ -4853,7 +5374,7 @@ function MatchForm({ onSubmit, onCancel, players, teamColors, teamName, initial 
   );
 }
 
-function MatchDetail({ match, players, onUpdate, onDelete, onClose, teamColors, lineup, clubLabel, teamName }) {
+function MatchDetail({ match, players, onUpdate, onDelete, onClose, teamColors, lineup, clubLabel, teamName, showToast }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editing, setEditing] = useState(false);
   const [scorerError, setScorerError] = useState("");
@@ -5026,6 +5547,30 @@ function MatchDetail({ match, players, onUpdate, onDelete, onClose, teamColors, 
           )}
         </div>
         <div className="flex items-center gap-1.5 flex-wrap no-print">
+          {!isPlayed && (
+            <button
+              onClick={async () => {
+                const imageUrl = generateConvocationImage(match, players, clubLabel);
+                const file = dataUrlToFile(imageUrl, `convocazione-${(match.opponent || "partita").replace(/[^a-z0-9]+/gi, "-")}.png`);
+                const label = `Convocazione vs ${match.opponent || ""} — ${formatDate(match.date)}`;
+                const shared = await shareFilesNative([file], { title: label, text: label });
+                if (!shared) {
+                  const a = document.createElement("a");
+                  a.href = imageUrl;
+                  a.download = file.name;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  openWhatsAppFallback(`${label} — allega l'immagine appena scaricata`);
+                  showToast?.("Condivisione diretta non disponibile: immagine scaricata, allegala su WhatsApp manualmente.", "error");
+                }
+              }}
+              className="rounded-lg p-2 hover:bg-white/10 text-slate-400"
+              title="Condividi convocazione (es. su WhatsApp)"
+            >
+              <Share2 className="w-4 h-4" />
+            </button>
+          )}
           <button onClick={handlePrintConvocation} className="rounded-lg p-2 hover:bg-white/10 text-slate-400" title={isPlayed ? "Scarica risultato e convocati" : "Scarica modulo e convocazione (2 pagine)"}>
             <Download className="w-4 h-4" />
           </button>
@@ -6827,9 +7372,16 @@ function DossierSection({ library, updateLibrary, showToast }) {
   }
 
   function deleteDocument(id) {
+    const removed = dossier.find((d) => d.id === id);
     updateLibrary((lib) => ({ dossier: (lib.dossier || []).filter((d) => d.id !== id) }));
     setConfirmDeleteId(null);
-    showToast("Documento eliminato");
+    showToast(
+      `"${removed?.title || "Documento"}" eliminato`,
+      "success",
+      removed
+        ? { label: "Annulla", onClick: () => updateLibrary((lib) => ({ dossier: [...(lib.dossier || []), removed] })) }
+        : null
+    );
   }
 
   function openDocument(doc) {
@@ -6999,7 +7551,7 @@ function DossierUploadForm({ fileName, fileSize, onSubmit, onCancel }) {
    SEZIONE EXPORT / IMPORT
    ============================================================ */
 
-function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, library, setLibrary, showToast, lastSavedAt }) {
+function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, library, setLibrary, showToast, lastSavedAt, onExported }) {
   const fileInputRef = React.useRef(null);
   const [importPreview, setImportPreview] = useState(null); // { data, fileName, isOlder }
 
@@ -7010,6 +7562,8 @@ function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, l
       2
     );
     downloadBlob(payload, `backup-${activeSeason?.name || "stagione"}_${formatBackupDateSuffix()}.json`, "application/json");
+    markExportDone();
+    onExported?.();
     showToast("Backup JSON scaricato");
   }
 
@@ -7719,6 +8273,67 @@ function generateFocusSummaryImage(focus) {
 
     y += rowHeights[i];
   });
+
+  return canvas.toDataURL("image/png");
+}
+
+// Genera un'immagine di convocazione (sfondo verde chiaro, stile "locandina")
+// pronta da condividere su WhatsApp: intestazione con avversario/data/luogo e
+// elenco dei convocati con solo il nome (senza numero di maglia né ruolo, su
+// richiesta, per un messaggio più semplice da leggere per i genitori).
+function generateConvocationImage(match, players, clubLabel) {
+  const convocati = players.filter((p) => (match.convocati || []).includes(p.id));
+  const width = 800;
+  const padding = 48;
+  const headerHeight = 190;
+  const rowHeight = 42;
+  const height = headerHeight + Math.max(convocati.length, 1) * rowHeight + padding;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+
+  // Sfondo verde chiaro, come richiesto
+  ctx.fillStyle = "#dcfce7";
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.fillStyle = "#166534";
+  ctx.font = "600 18px Arial, sans-serif";
+  ctx.fillText(clubLabel || "Convocazione", padding, 46);
+
+  ctx.fillStyle = "#052e1a";
+  ctx.font = "bold 34px Arial, sans-serif";
+  ctx.fillText(`vs ${match.opponent || ""}`, padding, 88);
+
+  ctx.fillStyle = "#166534";
+  ctx.font = "500 19px Arial, sans-serif";
+  const infoLine = [formatDate(match.date), match.time, match.venue].filter(Boolean).join(" · ");
+  ctx.fillText(infoLine, padding, 118);
+
+  ctx.strokeStyle = "rgba(5,46,26,0.25)";
+  ctx.beginPath();
+  ctx.moveTo(padding, 140);
+  ctx.lineTo(width - padding, 140);
+  ctx.stroke();
+
+  ctx.fillStyle = "#052e1a";
+  ctx.font = "bold 20px Arial, sans-serif";
+  ctx.fillText(`Convocati (${convocati.length})`, padding, 172);
+
+  let y = headerHeight + 20;
+  if (convocati.length === 0) {
+    ctx.fillStyle = "#166534";
+    ctx.font = "italic 16px Arial, sans-serif";
+    ctx.fillText("Nessun convocato ancora selezionato", padding, y);
+  } else {
+    convocati.forEach((p, i) => {
+      ctx.fillStyle = "#052e1a";
+      ctx.font = "600 20px Arial, sans-serif";
+      ctx.fillText(`${i + 1}. ${p.name}`, padding, y);
+      y += rowHeight;
+    });
+  }
 
   return canvas.toDataURL("image/png");
 }
