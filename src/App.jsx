@@ -1122,6 +1122,39 @@ function migrateLibraryCategories(lib) {
   return { ...lib, config: { ...config, categories }, exercises };
 }
 
+// MIGRAZIONE (26/08/2026): in passato si potevano creare esercizi "al volo"
+// direttamente dentro un Focus Tecnico. Questo causava esercizi visibili in
+// libreria come duplicati "Da: <nome Focus>" invece che come veri Esercizi
+// Singoli. Da ora i Focus possono solo referenziare esercizi già presenti in
+// libreria: questa funzione promuove una tantum a Esercizio Singolo ogni
+// esercizio già presente in un Focus di qualunque stagione che non abbia già
+// un corrispondente standalone (stesso titolo/tipo/tempo/descrizione), così
+// nessun contenuto già inserito va perso. Idempotente: rieseguirla su dati
+// già migrati non crea ulteriori duplicati.
+function migrateFocusExercisesToLibrary(allSeasons, lib) {
+  if (!lib) return lib;
+  const currentExercises = [...(lib.exercises || [])];
+  const matchesExisting = (ex) =>
+    currentExercises.some(
+      (e) =>
+        (e.title || "").trim().toLowerCase() === (ex.title || "").trim().toLowerCase() &&
+        (e.type || "Tecnica") === (ex.type || "Tecnica") &&
+        (e.time || "") === (ex.time || "") &&
+        (e.description || "") === (ex.description || "")
+    );
+  (allSeasons || []).forEach((s) => {
+    (s.focusTecnici || []).forEach((ft) => {
+      (ft.exercises || []).forEach((ex) => {
+        if (!ex.title || !ex.title.trim()) return;
+        if (!matchesExisting(ex)) {
+          currentExercises.push({ ...ex, id: uid("ex") });
+        }
+      });
+    });
+  });
+  return { ...lib, exercises: currentExercises };
+}
+
 function emptyLineup() {
   return { formationId: null, assignments: {}, bench: [] };
 }
@@ -1899,13 +1932,12 @@ export default function FootballClubApp() {
           if (data.library) {
             // Assicura che eventuali voci aggiunte in versioni successive (es. categorie)
             // siano comunque presenti anche su librerie salvate da versioni precedenti.
-            setLibrary(
-              migrateLibraryCategories({
-                ...defaultLibrary(),
-                ...data.library,
-                config: { ...defaultConfig(), ...(data.library.config || {}) },
-              })
-            );
+            const rawLibrary = {
+              ...defaultLibrary(),
+              ...data.library,
+              config: { ...defaultConfig(), ...(data.library.config || {}) },
+            };
+            setLibrary(migrateLibraryCategories(migrateFocusExercisesToLibrary(data.seasons, rawLibrary)));
           } else {
             // MIGRAZIONE: prima apertura dopo l'introduzione della libreria globale.
             // Unisce esercizi/dossier già presenti in ciascuna stagione (deduplicando
@@ -1930,14 +1962,13 @@ export default function FootballClubApp() {
               });
             });
             const configSource = data.seasons.find((s) => s.config)?.config;
-            setLibrary(
-              migrateLibraryCategories({
-                exercises: mergedExercises,
-                dossier: mergedDossier,
-                customFormations: [],
-                config: { ...defaultConfig(), ...(configSource || {}) },
-              })
-            );
+            const rawLibrary = {
+              exercises: mergedExercises,
+              dossier: mergedDossier,
+              customFormations: [],
+              config: { ...defaultConfig(), ...(configSource || {}) },
+            };
+            setLibrary(migrateLibraryCategories(migrateFocusExercisesToLibrary(data.seasons, rawLibrary)));
           }
         } else {
           const s = newSeason("Stagione 2026-27");
@@ -3926,28 +3957,6 @@ function TrainingsSection({ season, updateSeason, library, updateLibrary, showTo
       const focusTecnici = exists ? list.map((f) => (f.id === ft.id ? ft : f)) : [...list, ft];
       return { focusTecnici };
     });
-
-    // Gli esercizi inseriti direttamente nel Focus (con titolo) vengono aggiunti
-    // anche all'elenco esercizi singoli della libreria globale, se non esiste già
-    // un esercizio identico
-    updateLibrary((lib) => {
-      const currentExercises = lib.exercises || [];
-      const newStandalone = [];
-      (ft.exercises || []).forEach((ex) => {
-        if (!ex.title || !ex.title.trim()) return;
-        const alreadyExists = [...currentExercises, ...newStandalone].some(
-          (e) =>
-            e.title.trim().toLowerCase() === ex.title.trim().toLowerCase() &&
-            (e.type || "Tecnica") === (ex.type || "Tecnica") &&
-            (e.time || "") === (ex.time || "") &&
-            (e.description || "") === (ex.description || "")
-        );
-        if (!alreadyExists) {
-          newStandalone.push({ ...ex, id: uid("ex") });
-        }
-      });
-      return { exercises: [...currentExercises, ...newStandalone] };
-    });
     showToast("Focus Tecnico salvato");
   }
 
@@ -4064,9 +4073,6 @@ function TrainingsSection({ season, updateSeason, library, updateLibrary, showTo
           exercises={library.exercises || []}
           onSaveExercise={saveExercise}
           onDeleteExercise={deleteExercise}
-          focusTecnici={focusTecnici}
-          onUpdateFocusExercise={updateFocusExercise}
-          onDeleteFocusExercise={deleteFocusExercise}
           showToast={showToast}
         />
       ) : trainings.length === 0 ? (
@@ -4155,6 +4161,7 @@ function FocusTecniciSection({ focusTecnici, onSave, onDelete, exercises, onSave
   const [editing, setEditing] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [expandedFocus, setExpandedFocus] = useState(null);
+  const [lightboxSrc, setLightboxSrc] = useState(null);
 
   const [showExerciseForm, setShowExerciseForm] = useState(false);
   const [editingExercise, setEditingExercise] = useState(null);
@@ -4258,14 +4265,21 @@ function FocusTecniciSection({ focusTecnici, onSave, onDelete, exercises, onSave
               </div>
               <div className="space-y-1.5">
                 {(ft.exercises || []).map((ex, i) => (
-                  <div key={ex.id || i} className="text-xs text-slate-400">
-                    <div className="flex gap-1.5 flex-wrap items-center">
-                      {ex.type && <Badge className={EXERCISE_TYPE_STYLES[ex.type] || EXERCISE_TYPE_STYLES.Tecnica}>{ex.type}</Badge>}
-                      <span className="text-emerald-400 font-semibold shrink-0">{ex.title || "Esercizio"}</span>
-                      <span className="text-slate-600">·</span>
-                      <span className="shrink-0">{ex.time || "--"}</span>
+                  <div key={ex.id || i} className="text-xs text-slate-400 flex items-start gap-2">
+                    {ex.image && (
+                      <button type="button" onClick={() => setLightboxSrc(ex.image)} className="shrink-0 mt-0.5">
+                        <img src={ex.thumbnail || ex.image} alt={ex.title} className="w-9 h-9 object-cover rounded-lg" />
+                      </button>
+                    )}
+                    <div className="min-w-0">
+                      <div className="flex gap-1.5 flex-wrap items-center">
+                        {ex.type && <Badge className={EXERCISE_TYPE_STYLES[ex.type] || EXERCISE_TYPE_STYLES.Tecnica}>{ex.type}</Badge>}
+                        <span className="text-emerald-400 font-semibold shrink-0">{ex.title || "Esercizio"}</span>
+                        <span className="text-slate-600">·</span>
+                        <span className="shrink-0">{ex.time || "--"}</span>
+                      </div>
+                      {ex.goal && <p className="text-[11px] text-slate-500 italic">Obiettivo: {ex.goal}</p>}
                     </div>
-                    {ex.goal && <p className="text-[11px] text-slate-500 italic">Obiettivo: {ex.goal}</p>}
                   </div>
                 ))}
               </div>
@@ -4296,8 +4310,8 @@ function FocusTecniciSection({ focusTecnici, onSave, onDelete, exercises, onSave
         {editing && (
           <FocusTecnicoForm
             initial={editing}
-            library={focusTecnici}
             standaloneExercises={exercises}
+            onCreateExercise={onSaveExercise}
             onCancel={() => setShowForm(false)}
             onSubmit={(ft) => {
               onSave(ft);
@@ -4323,6 +4337,8 @@ function FocusTecniciSection({ focusTecnici, onSave, onDelete, exercises, onSave
       {expandedFocus && (
         <FocusDetailViewer focus={expandedFocus} onClose={() => setExpandedFocus(null)} showToast={showToast} />
       )}
+
+      {lightboxSrc && <ImageLightbox src={lightboxSrc} alt="Esercizio" onClose={() => setLightboxSrc(null)} />}
     </div>
   );
 }
@@ -4426,26 +4442,20 @@ function ExerciseForm({ initial, onSubmit, onCancel }) {
   );
 }
 
-function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, focusTecnici, onUpdateFocusExercise, onDeleteFocusExercise, showToast }) {
+function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, showToast }) {
   const config = useConfig();
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("Tutti");
   const [categoryFilter, setCategoryFilter] = useState("Tutte");
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [editingSource, setEditingSource] = useState(null); // null = singolo, {focusId} = da Focus Tecnico
   const [confirmDeleteKey, setConfirmDeleteKey] = useState(null);
   const [lightboxSrc, setLightboxSrc] = useState(null);
 
-  // Unisce esercizi singoli e quelli già usati dentro i Focus Tecnici in un unico elenco
-  const combined = [
-    ...(exercises || []).map((ex) => ({ ...ex, _source: null, _key: `standalone-${ex.id}` })),
-    ...(focusTecnici || []).flatMap((ft) =>
-      (ft.exercises || [])
-        .filter((ex) => ex.title)
-        .map((ex) => ({ ...ex, _source: { focusId: ft.id, focusTitle: ft.title }, _key: `focus-${ft.id}-${ex.id}` }))
-    ),
-  ];
+  // Unica fonte di verità: tutti gli esercizi vivono qui come "Esercizio Singolo".
+  // I Focus Tecnici possono solo referenziarli (vedi FocusTecnicoForm), non crearne
+  // di nuovi al volo, per evitare duplicati come accadeva in passato.
+  const combined = (exercises || []).map((ex) => ({ ...ex, _key: `standalone-${ex.id}` }));
 
   const filtered = combined.filter((ex) => {
     const q = search.toLowerCase();
@@ -4479,25 +4489,16 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
 
   function openEdit(ex) {
     setEditing(ex);
-    setEditingSource(ex._source);
     setShowForm(true);
   }
 
   function handleSubmit(updatedEx) {
-    if (editingSource) {
-      onUpdateFocusExercise(editingSource.focusId, updatedEx.id, updatedEx);
-    } else {
-      onSaveExercise(updatedEx);
-    }
+    onSaveExercise(updatedEx);
     setShowForm(false);
   }
 
   function handleDelete(ex) {
-    if (ex._source) {
-      onDeleteFocusExercise(ex._source.focusId, ex.id);
-    } else {
-      onDeleteExercise(ex.id);
-    }
+    onDeleteExercise(ex.id);
     setConfirmDeleteKey(null);
   }
 
@@ -4589,8 +4590,8 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
                           {ex.category && (
                             <Badge className="bg-sky-500/15 text-sky-400 border-sky-500/30">{ex.category}</Badge>
                           )}
-                          <Badge className={ex._source ? "bg-sky-500/15 text-sky-400 border-sky-500/30" : "bg-white/5 text-slate-400 border-white/10"}>
-                            {ex._source ? `Da: ${ex._source.focusTitle}` : "Esercizio singolo"}
+                          <Badge className="bg-white/5 text-slate-400 border-white/10">
+                            Esercizio singolo
                           </Badge>
                         </div>
                         <div className="flex gap-1 shrink-0">
@@ -4649,37 +4650,29 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
   );
 }
 
-function FocusTecnicoForm({ initial, onSubmit, onCancel, library, standaloneExercises }) {
+function FocusTecnicoForm({ initial, onSubmit, onCancel, standaloneExercises, onCreateExercise }) {
   const config = useConfig();
   const [form, setForm] = useState(initial);
-  const [pickValue, setPickValue] = useState("");
+  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState("Tutti");
+  const [showCreateExercise, setShowCreateExercise] = useState(false);
+  const [lightboxSrc, setLightboxSrc] = useState(null);
 
-  const libraryExercises = [
-    ...(standaloneExercises || []).map((ex) => ({ ...ex, _sourceTitle: "Esercizio singolo", _key: `standalone-${ex.id}` })),
-    ...(library || [])
-      .filter((ft) => ft.id !== form.id)
-      .flatMap((ft) => (ft.exercises || []).map((ex, i) => ({ ...ex, _sourceTitle: ft.title, _key: `${ft.id}-${ex.id || i}` }))),
-  ]
+  const selectedSourceIds = new Set(form.exercises.map((ex) => ex.sourceExerciseId).filter(Boolean));
+
+  const filteredLibrary = (standaloneExercises || [])
     .filter((ex) => ex.title)
+    .filter((ex) => {
+      const q = search.trim().toLowerCase();
+      const matchesSearch = !q || ex.title.toLowerCase().includes(q) || (ex.goal || "").toLowerCase().includes(q);
+      const matchesType = typeFilter === "Tutti" || (ex.type || "Tecnica") === typeFilter;
+      return matchesSearch && matchesType;
+    })
     .sort((a, b) => (a.type || "Tecnica").localeCompare(b.type || "Tecnica", "it") || a.title.localeCompare(b.title, "it"));
 
-  function updateExercise(idx, patch) {
-    const exercises = [...form.exercises];
-    exercises[idx] = { ...exercises[idx], ...patch };
-    setForm({ ...form, exercises });
-  }
-
-  function addExercise() {
-    if (form.exercises.length >= 6) return;
-    setForm({ ...form, exercises: [...form.exercises, { id: uid("ex"), title: "", type: "Tecnica", time: "", goal: "", description: "" }] });
-  }
-
-  function addExistingExercise(key) {
-    const source = libraryExercises.find((ex) => ex._key === key);
-    if (!source || form.exercises.length >= 6) return;
-    const { _sourceTitle, _key, ...clean } = source;
-    setForm({ ...form, exercises: [...form.exercises, { ...clean, id: uid("ex") }] });
-    setPickValue("");
+  function addExistingExercise(source) {
+    if (form.exercises.length >= 6 || selectedSourceIds.has(source.id)) return;
+    setForm({ ...form, exercises: [...form.exercises, { ...source, id: uid("ex"), sourceExerciseId: source.id }] });
   }
 
   function removeExercise(idx) {
@@ -4694,106 +4687,123 @@ function FocusTecnicoForm({ initial, onSubmit, onCancel, library, standaloneExer
     setForm({ ...form, exercises });
   }
 
+  function handleNewExerciseCreated(newEx) {
+    onCreateExercise(newEx); // salva nella libreria Esercizi Singoli
+    if (form.exercises.length < 6) {
+      setForm((f) => ({ ...f, exercises: [...f.exercises, { ...newEx, id: uid("ex"), sourceExerciseId: newEx.id }] }));
+    }
+    setShowCreateExercise(false);
+  }
+
   return (
     <div>
       <Field label="Titolo dell'allenamento tipo">
         <input className={inputClass} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Es. Possesso palla e transizioni" />
       </Field>
 
-      <div className="flex items-center justify-between mb-2 mt-4 flex-wrap gap-2">
-        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Esercizi (max 6)</p>
-        <button
-          onClick={addExercise}
-          disabled={form.exercises.length >= 6}
-          className="text-emerald-400 text-xs font-medium flex items-center gap-1 disabled:opacity-30 disabled:cursor-not-allowed"
-        >
-          <Plus className="w-3.5 h-3.5" /> Aggiungi esercizio nuovo
-        </button>
-      </div>
-
-      {libraryExercises.length > 0 && (
-        <div className="mb-3">
-          <select
-            className={inputClass}
-            value={pickValue}
-            disabled={form.exercises.length >= 6}
-            onChange={(e) => addExistingExercise(e.target.value)}
-          >
-            <option value="">— Inserisci un esercizio già presente nel menu Esercizi —</option>
-            {libraryExercises.map((ex) => (
-              <option key={ex._key} value={ex._key}>
-                {ex.type || "Tecnica"} - {ex.title} - {ex.time || "--"}
-              </option>
+      {form.exercises.length > 0 && (
+        <div className="mb-4">
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Esercizi selezionati ({form.exercises.length}/6)</p>
+          <div className="space-y-2">
+            {form.exercises.map((ex, i) => (
+              <div key={ex.id || i} className="rounded-xl border border-white/10 p-2.5 flex items-center gap-3">
+                {ex.image && (
+                  <button type="button" onClick={() => setLightboxSrc(ex.image)} className="shrink-0">
+                    <img src={ex.thumbnail || ex.image} alt={ex.title} className="w-10 h-10 object-cover rounded-lg" />
+                  </button>
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {ex.type && <Badge className={EXERCISE_TYPE_STYLES[ex.type] || EXERCISE_TYPE_STYLES.Tecnica}>{ex.type}</Badge>}
+                    <span className="text-sm font-semibold text-slate-100">{ex.title}</span>
+                    <span className="text-[11px] text-slate-500">· {ex.time || "--"}</span>
+                  </div>
+                  {ex.goal && <p className="text-[11px] text-slate-500 italic truncate">Obiettivo: {ex.goal}</p>}
+                </div>
+                <div className="flex items-center gap-0.5 shrink-0">
+                  <button onClick={() => moveExercise(i, -1)} disabled={i === 0} className="text-slate-400 hover:text-slate-200 p-1 disabled:opacity-20" title="Sposta su">
+                    <ChevronUp className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={() => moveExercise(i, 1)} disabled={i === form.exercises.length - 1} className="text-slate-400 hover:text-slate-200 p-1 disabled:opacity-20" title="Sposta giù">
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={() => removeExercise(i)} className="text-rose-400 p-1" title="Rimuovi dal Focus">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
             ))}
-          </select>
+          </div>
         </div>
       )}
 
-      <div className="space-y-3">
-        {form.exercises.map((ex, i) => (
-          <div key={ex.id || i} className="rounded-xl border border-white/10 p-3 relative">
-            <div className="absolute top-2 right-2 flex items-center gap-0.5">
-              <button
-                onClick={() => moveExercise(i, -1)}
-                disabled={i === 0}
-                className="text-slate-400 hover:text-slate-200 p-1 disabled:opacity-20 disabled:cursor-not-allowed"
-                title="Sposta su"
-              >
-                <ChevronUp className="w-3.5 h-3.5" />
-              </button>
-              <button
-                onClick={() => moveExercise(i, 1)}
-                disabled={i === form.exercises.length - 1}
-                className="text-slate-400 hover:text-slate-200 p-1 disabled:opacity-20 disabled:cursor-not-allowed"
-                title="Sposta giù"
-              >
-                <ChevronDown className="w-3.5 h-3.5" />
-              </button>
-              <button onClick={() => removeExercise(i)} className="text-rose-400 p-1" title="Rimuovi">
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-wide mb-1.5">Esercizio {i + 1}</p>
-            <div className="grid sm:grid-cols-2 gap-2 mb-2">
-              <input
-                className={inputClass}
-                placeholder="Titolo esercizio (es. Attivazione)"
-                value={ex.title}
-                onChange={(e) => updateExercise(i, { title: e.target.value })}
-              />
-              <input
-                className={inputClass}
-                placeholder="Tempo di esecuzione (es. 10 minuti)"
-                value={ex.time}
-                onChange={(e) => updateExercise(i, { time: e.target.value })}
-              />
-            </div>
-            <div className="mb-2">
-              <select
-                className={inputClass}
-                value={ex.type || "Tecnica"}
-                onChange={(e) => updateExercise(i, { type: e.target.value })}
-              >
-                {config.exerciseTypes.map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
-            </div>
-            <input
-              className={inputClass + " mb-2"}
-              placeholder="Obiettivo (es. Migliorare il controllo orientato)"
-              value={ex.goal || ""}
-              onChange={(e) => updateExercise(i, { goal: e.target.value })}
-            />
-            <textarea
-              rows={2}
-              className={inputClass}
-              placeholder="Descrizione (es. Palleggi liberi)"
-              value={ex.description}
-              onChange={(e) => updateExercise(i, { description: e.target.value })}
-            />
-          </div>
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Aggiungi dalla libreria Esercizi</p>
+        <button
+          onClick={() => setShowCreateExercise(true)}
+          className="text-emerald-400 text-xs font-medium flex items-center gap-1"
+        >
+          <Plus className="w-3.5 h-3.5" /> Non lo trovi? Crea nuovo esercizio
+        </button>
+      </div>
+
+      <div className="relative mb-2">
+        <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Cerca esercizio per titolo o obiettivo..."
+          className={inputClass + " pl-9"}
+        />
+      </div>
+      <div className="flex items-center gap-1.5 mb-3 overflow-x-auto pb-1">
+        {["Tutti", ...config.exerciseTypes].map((t) => (
+          <button
+            key={t}
+            onClick={() => setTypeFilter(t)}
+            className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-medium border transition-colors ${
+              typeFilter === t ? "bg-emerald-500 text-slate-950 border-emerald-500" : "border-white/10 text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            {t}
+          </button>
         ))}
+      </div>
+
+      <div className="rounded-xl border border-white/10 max-h-64 overflow-y-auto divide-y divide-white/5 mb-4">
+        {filteredLibrary.length === 0 ? (
+          <p className="text-xs text-slate-500 text-center py-6">
+            {(standaloneExercises || []).length === 0
+              ? "Nessun esercizio in libreria: creane uno con il pulsante qui sopra."
+              : "Nessun esercizio trovato per questa ricerca."}
+          </p>
+        ) : (
+          filteredLibrary.map((ex) => {
+            const alreadyAdded = selectedSourceIds.has(ex.id);
+            return (
+              <button
+                key={ex.id}
+                type="button"
+                onClick={() => addExistingExercise(ex)}
+                disabled={alreadyAdded || form.exercises.length >= 6}
+                className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {ex.image ? (
+                  <img src={ex.thumbnail || ex.image} alt={ex.title} className="w-9 h-9 object-cover rounded-lg shrink-0" />
+                ) : (
+                  <div className="w-9 h-9 rounded-lg bg-white/5 shrink-0" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {ex.type && <Badge className={EXERCISE_TYPE_STYLES[ex.type] || EXERCISE_TYPE_STYLES.Tecnica}>{ex.type}</Badge>}
+                    <span className="text-sm text-slate-200 truncate">{ex.title}</span>
+                  </div>
+                </div>
+                <span className="text-[11px] text-slate-500 shrink-0">{alreadyAdded ? "Già aggiunto" : ex.time || "--"}</span>
+              </button>
+            );
+          })
+        )}
       </div>
 
       <div className="flex justify-end gap-2 mt-4">
@@ -4802,6 +4812,12 @@ function FocusTecnicoForm({ initial, onSubmit, onCancel, library, standaloneExer
           <Save className="w-4 h-4" /> Salva Focus Tecnico
         </Button>
       </div>
+
+      <Modal open={showCreateExercise} onClose={() => setShowCreateExercise(false)} title="Nuovo Esercizio Singolo" wide>
+        <ExerciseForm initial={emptyExercise()} onCancel={() => setShowCreateExercise(false)} onSubmit={handleNewExerciseCreated} />
+      </Modal>
+
+      {lightboxSrc && <ImageLightbox src={lightboxSrc} alt="Esercizio" onClose={() => setLightboxSrc(null)} />}
     </div>
   );
 }
@@ -4860,6 +4876,7 @@ function TrainingDetail({ training, players, focusTecnici, onUpdate, onDelete })
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [expandedStatus, setExpandedStatus] = useState(null);
   const [editing, setEditing] = useState(false);
+  const [exerciseLightboxSrc, setExerciseLightboxSrc] = useState(null);
 
   const linkedFocus = (focusTecnici || []).find((f) => f.id === training.focusTecnicoId);
 
@@ -4986,16 +5003,23 @@ function TrainingDetail({ training, players, focusTecnici, onUpdate, onDelete })
           </div>
           <div className="space-y-2">
             {linkedFocus.exercises.map((ex, i) => (
-              <div key={ex.id || i} className="rounded-xl border border-white/10 p-3">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {ex.type && <Badge className={EXERCISE_TYPE_STYLES[ex.type] || EXERCISE_TYPE_STYLES.Tecnica}>{ex.type}</Badge>}
-                    <p className="text-sm font-semibold text-slate-200">{ex.title || `Esercizio ${i + 1}`}</p>
+              <div key={ex.id || i} className="rounded-xl border border-white/10 p-3 flex items-start gap-3">
+                {ex.image && (
+                  <button type="button" onClick={() => setExerciseLightboxSrc(ex.image)} className="shrink-0">
+                    <img src={ex.thumbnail || ex.image} alt={ex.title} className="w-12 h-12 object-cover rounded-lg" />
+                  </button>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {ex.type && <Badge className={EXERCISE_TYPE_STYLES[ex.type] || EXERCISE_TYPE_STYLES.Tecnica}>{ex.type}</Badge>}
+                      <p className="text-sm font-semibold text-slate-200">{ex.title || `Esercizio ${i + 1}`}</p>
+                    </div>
+                    {ex.time && <Badge className="bg-sky-500/15 text-sky-400 border-sky-500/30 shrink-0">{ex.time}</Badge>}
                   </div>
-                  {ex.time && <Badge className="bg-sky-500/15 text-sky-400 border-sky-500/30 shrink-0">{ex.time}</Badge>}
+                  {ex.goal && <p className="text-xs text-emerald-400/90 mt-1 italic">Obiettivo: {ex.goal}</p>}
+                  {ex.description && <p className="text-xs text-slate-500 mt-1">{ex.description}</p>}
                 </div>
-                {ex.goal && <p className="text-xs text-emerald-400/90 mt-1 italic">Obiettivo: {ex.goal}</p>}
-                {ex.description && <p className="text-xs text-slate-500 mt-1">{ex.description}</p>}
               </div>
             ))}
           </div>
@@ -5033,6 +5057,8 @@ function TrainingDetail({ training, players, focusTecnici, onUpdate, onDelete })
           ))}
         </div>
       )}
+
+      {exerciseLightboxSrc && <ImageLightbox src={exerciseLightboxSrc} alt="Esercizio" onClose={() => setExerciseLightboxSrc(null)} />}
     </div>
   );
 }
@@ -7607,13 +7633,12 @@ function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, l
     setSeasons(data.seasons);
     setActiveSeasonId(data.activeSeasonId || data.seasons[0]?.id);
     if (data.library) {
-      setLibrary(
-        migrateLibraryCategories({
-          ...defaultLibrary(),
-          ...data.library,
-          config: { ...defaultConfig(), ...(data.library.config || {}) },
-        })
-      );
+      const rawLibrary = {
+        ...defaultLibrary(),
+        ...data.library,
+        config: { ...defaultConfig(), ...(data.library.config || {}) },
+      };
+      setLibrary(migrateLibraryCategories(migrateFocusExercisesToLibrary(data.seasons, rawLibrary)));
     }
     showToast("Dati importati con successo");
   }
