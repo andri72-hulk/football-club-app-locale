@@ -1126,11 +1126,17 @@ function migrateLibraryCategories(lib) {
 // direttamente dentro un Focus Tecnico. Questo causava esercizi visibili in
 // libreria come duplicati "Da: <nome Focus>" invece che come veri Esercizi
 // Singoli. Da ora i Focus possono solo referenziare esercizi già presenti in
-// libreria: questa funzione promuove una tantum a Esercizio Singolo ogni
-// esercizio già presente in un Focus di qualunque stagione che non abbia già
-// un corrispondente standalone (stesso titolo/tipo/tempo/descrizione), così
-// nessun contenuto già inserito va perso. Idempotente: rieseguirla su dati
-// già migrati non crea ulteriori duplicati.
+// libreria (tramite il campo sourceExerciseId): questa funzione promuove una
+// tantum a Esercizio Singolo solo gli esercizi "orfani" salvati con il vecchio
+// sistema (senza sourceExerciseId, quindi sicuramente precedenti al fix).
+//
+// FIX (26/08/2026): la versione precedente confrontava anche gli esercizi già
+// collegati (con sourceExerciseId) per titolo/tipo/tempo/descrizione. Se poi
+// l'utente modificava l'esercizio originale in libreria, la copia "congelata"
+// dentro il Focus non corrispondeva più e veniva ripromossa come NUOVO
+// esercizio duplicato ad ogni caricamento — un esercizio sembrava "duplicarsi
+// da solo" dopo averlo modificato. Ora gli esercizi con sourceExerciseId sono
+// sempre ignorati qui: l'originale in libreria resta l'unica fonte di verità.
 function migrateFocusExercisesToLibrary(allSeasons, lib) {
   if (!lib) return lib;
   const currentExercises = [...(lib.exercises || [])];
@@ -1146,6 +1152,7 @@ function migrateFocusExercisesToLibrary(allSeasons, lib) {
     (s.focusTecnici || []).forEach((ft) => {
       (ft.exercises || []).forEach((ex) => {
         if (!ex.title || !ex.title.trim()) return;
+        if (ex.sourceExerciseId) return; // già collegato a un esercizio standalone: mai ripromuovere
         if (!matchesExisting(ex)) {
           currentExercises.push({ ...ex, id: uid("ex") });
         }
@@ -1153,6 +1160,31 @@ function migrateFocusExercisesToLibrary(allSeasons, lib) {
     });
   });
   return { ...lib, exercises: currentExercises };
+}
+
+// PULIZIA (26/08/2026): rimuove eventuali duplicati esatti (stesso titolo,
+// tipo, tempo, obiettivo e descrizione) già creati dal bug corretto sopra,
+// prima che venisse individuato. Tiene il primo esistente di ciascun gruppo
+// identico ed elimina i doppioni. Non tocca esercizi solo simili (es. stesso
+// titolo ma descrizione diversa): quelli potrebbero essere stati modificati
+// volutamente e vanno controllati/rimossi a mano se non servono più.
+function dedupExactExercises(lib) {
+  if (!lib) return lib;
+  const seen = new Map();
+  const deduped = [];
+  (lib.exercises || []).forEach((ex) => {
+    const signature = [
+      (ex.title || "").trim().toLowerCase(),
+      ex.type || "Tecnica",
+      ex.time || "",
+      (ex.goal || "").trim().toLowerCase(),
+      (ex.description || "").trim().toLowerCase(),
+    ].join("|");
+    if (seen.has(signature)) return; // duplicato esatto: scartato
+    seen.set(signature, true);
+    deduped.push(ex);
+  });
+  return deduped.length === (lib.exercises || []).length ? lib : { ...lib, exercises: deduped };
 }
 
 function emptyLineup() {
@@ -1941,7 +1973,7 @@ export default function FootballClubApp() {
               ...data.library,
               config: { ...defaultConfig(), ...(data.library.config || {}) },
             };
-            setLibrary(migrateLibraryCategories(migrateFocusExercisesToLibrary(data.seasons, rawLibrary)));
+            setLibrary(dedupExactExercises(migrateLibraryCategories(migrateFocusExercisesToLibrary(data.seasons, rawLibrary))));
           } else {
             // MIGRAZIONE: prima apertura dopo l'introduzione della libreria globale.
             // Unisce esercizi/dossier già presenti in ciascuna stagione (deduplicando
@@ -1972,7 +2004,7 @@ export default function FootballClubApp() {
               customFormations: [],
               config: { ...defaultConfig(), ...(configSource || {}) },
             };
-            setLibrary(migrateLibraryCategories(migrateFocusExercisesToLibrary(data.seasons, rawLibrary)));
+            setLibrary(dedupExactExercises(migrateLibraryCategories(migrateFocusExercisesToLibrary(data.seasons, rawLibrary))));
           }
         } else {
           const s = newSeason("Stagione 2026-27");
@@ -4778,11 +4810,13 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
   const [editing, setEditing] = useState(null);
   const [confirmDeleteKey, setConfirmDeleteKey] = useState(null);
   const [lightboxSrc, setLightboxSrc] = useState(null);
+  const [showDuplicatesReview, setShowDuplicatesReview] = useState(false);
 
   // Unica fonte di verità: tutti gli esercizi vivono qui come "Esercizio Singolo".
   // I Focus Tecnici possono solo referenziarli (vedi FocusTecnicoForm), non crearne
   // di nuovi al volo, per evitare duplicati come accadeva in passato.
   const combined = (exercises || []).map((ex) => ({ ...ex, _key: `standalone-${ex.id}` }));
+  const duplicateGroupsCount = findDuplicateExerciseGroups(exercises).length;
 
   const filtered = combined.filter((ex) => {
     const q = search.toLowerCase();
@@ -4835,6 +4869,14 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
           Esercizi totali: <span className="text-emerald-400 font-bold">{combined.length}</span>
         </p>
+        {duplicateGroupsCount > 0 && (
+          <button
+            onClick={() => setShowDuplicatesReview(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 px-3 py-1.5 text-xs text-amber-300 font-medium"
+          >
+            <AlertCircle className="w-3.5 h-3.5" /> Verifica duplicati ({duplicateGroupsCount})
+          </button>
+        )}
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 mb-3">
@@ -4971,7 +5013,154 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
         )}
       </Modal>
 
+      <Modal open={showDuplicatesReview} onClose={() => setShowDuplicatesReview(false)} title="Verifica Duplicati" size="xl">
+        <DuplicateExercisesReview
+          exercises={exercises}
+          onDeleteExercise={onDeleteExercise}
+          onSaveExercise={onSaveExercise}
+          showToast={showToast}
+        />
+      </Modal>
+
       {lightboxSrc && <ImageLightbox src={lightboxSrc} alt="Esercizio" onClose={() => setLightboxSrc(null)} />}
+    </div>
+  );
+}
+
+// Trova gruppi di possibili duplicati: stesso titolo (senza distinguere
+// maiuscole/spazi) E stessa tipologia. Non richiede che il resto dei campi
+// coincida, perché lo scopo è farli valutare a un umano, non cancellarli in
+// automatico — due esercizi possono avere lo stesso nome per errore, o essere
+// davvero due esercizi diversi che meritano solo un titolo più chiaro.
+function findDuplicateExerciseGroups(exercises) {
+  const map = new Map();
+  (exercises || []).forEach((ex) => {
+    if (!ex.title || !ex.title.trim()) return;
+    const key = `${ex.title.trim().toLowerCase()}|${ex.type || "Tecnica"}`;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(ex);
+  });
+  return Array.from(map.values()).filter((g) => g.length > 1);
+}
+
+// Strumento di revisione manuale: per ogni gruppo di possibili duplicati,
+// il mister può eliminare direttamente quello che non serve, oppure dichiarare
+// che sono esercizi diversi — in quel caso è obbligato a dare loro titoli
+// diversi prima di poterli tenere entrambi, per evitare ambiguità future.
+function DuplicateExercisesReview({ exercises, onDeleteExercise, onSaveExercise, showToast }) {
+  const groups = findDuplicateExerciseGroups(exercises);
+
+  if (groups.length === 0) {
+    return <EmptyState icon={CheckCircle2} text="Nessun possibile duplicato trovato (stesso titolo e tipologia)." />;
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-slate-500">
+        Trovati {groups.length} gruppi con titolo e tipologia identici. Per ciascuno, elimina quello che non ti serve
+        oppure indica che sono esercizi diversi: in quel caso dovrai assegnare loro titoli diversi prima di poterli
+        tenere entrambi.
+      </p>
+      {groups.map((group) => (
+        <DuplicateExerciseGroupCard
+          key={group.map((ex) => ex.id).join("-")}
+          group={group}
+          onDeleteExercise={onDeleteExercise}
+          onSaveExercise={onSaveExercise}
+          showToast={showToast}
+        />
+      ))}
+    </div>
+  );
+}
+
+function DuplicateExerciseGroupCard({ group, onDeleteExercise, onSaveExercise, showToast }) {
+  const [renaming, setRenaming] = useState(false);
+  const [titles, setTitles] = useState(group.map((ex) => ex.title));
+
+  const normalized = titles.map((t) => t.trim().toLowerCase());
+  const hasEmpty = titles.some((t) => !t.trim());
+  const hasDuplicateTitles = normalized.some((t, i) => normalized.indexOf(t) !== i);
+
+  function startRenaming() {
+    setTitles(group.map((ex) => ex.title));
+    setRenaming(true);
+  }
+
+  function confirmRename() {
+    if (hasEmpty || hasDuplicateTitles) return;
+    group.forEach((ex, i) => {
+      if (ex.title !== titles[i]) onSaveExercise({ ...ex, title: titles[i] });
+    });
+    showToast("Titoli aggiornati: esercizi mantenuti entrambi come distinti");
+    setRenaming(false);
+  }
+
+  return (
+    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+      <div className="flex items-center justify-between gap-2 mb-2.5 flex-wrap">
+        <p className="text-sm font-semibold text-slate-100">
+          "{group[0].title}" <span className="text-slate-500 font-normal">· {group[0].type || "Tecnica"} · {group.length} esercizi</span>
+        </p>
+        {!renaming && (
+          <button onClick={startRenaming} className="text-xs text-sky-400 font-medium shrink-0">
+            Sono esercizi diversi: rinomina per distinguerli
+          </button>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        {group.map((ex, i) => (
+          <div key={ex.id} className="rounded-lg border border-white/10 p-2.5 flex items-center gap-3">
+            {ex.image ? (
+              <img src={ex.thumbnail || ex.image} alt={ex.title} className="w-11 h-11 object-cover rounded-lg shrink-0" />
+            ) : (
+              <div className="w-11 h-11 rounded-lg bg-white/5 shrink-0" />
+            )}
+            <div className="flex-1 min-w-0">
+              {renaming ? (
+                <input
+                  className={inputClass + " mb-1"}
+                  value={titles[i]}
+                  onChange={(e) => setTitles((t) => t.map((v, idx) => (idx === i ? e.target.value : v)))}
+                />
+              ) : (
+                <p className="text-sm font-medium text-slate-100 truncate">{ex.title}</p>
+              )}
+              <p className="text-[11px] text-slate-500 truncate">
+                {ex.time || "--"}
+                {ex.goal ? ` · Obiettivo: ${ex.goal}` : ""}
+              </p>
+              {ex.description && <p className="text-[11px] text-slate-600 truncate">{ex.description}</p>}
+            </div>
+            {!renaming && (
+              <button
+                onClick={() => onDeleteExercise(ex.id)}
+                className="shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-medium text-rose-400 hover:bg-rose-500/10"
+              >
+                Elimina questo
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {renaming && (
+        <div className="flex items-center justify-between gap-2 mt-3 flex-wrap">
+          <div className="text-[11px]">
+            {hasEmpty && <span className="text-rose-400">Nessun titolo può essere vuoto.</span>}
+            {!hasEmpty && hasDuplicateTitles && <span className="text-rose-400">I titoli devono essere diversi tra loro.</span>}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="secondary" className="px-2.5 py-1 text-xs" onClick={() => setRenaming(false)}>
+              Annulla
+            </Button>
+            <Button className="px-2.5 py-1 text-xs" disabled={hasEmpty || hasDuplicateTitles} onClick={confirmRename}>
+              Salva e mantieni entrambi
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -8016,7 +8205,7 @@ function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, l
         ...data.library,
         config: { ...defaultConfig(), ...(data.library.config || {}) },
       };
-      setLibrary(migrateLibraryCategories(migrateFocusExercisesToLibrary(data.seasons, rawLibrary)));
+      setLibrary(dedupExactExercises(migrateLibraryCategories(migrateFocusExercisesToLibrary(data.seasons, rawLibrary))));
     }
     showToast("Dati importati con successo");
   }
