@@ -16,7 +16,7 @@ import {
   XCircle, AlertCircle, HeartPulse, Target, Zap, FileSpreadsheet, FileText,
   ArrowLeftRight, Award, Flag, UserCheck, UserX, Menu, ChevronDown, ChevronUp,
   TrendingUp, RefreshCw, Info, LayoutGrid, Handshake, StickyNote, SlidersHorizontal,
-  Eye, Maximize2, Share2, Sun, Moon
+  Eye, Maximize2, Share2, Sun, Moon, AlertTriangle
 } from "lucide-react";
 
 /* ============================================================
@@ -4817,6 +4817,9 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
   // di nuovi al volo, per evitare duplicati come accadeva in passato.
   const combined = (exercises || []).map((ex) => ({ ...ex, _key: `standalone-${ex.id}` }));
   const duplicateGroupsCount = findDuplicateExerciseGroups(exercises).length;
+  const duplicateIds = new Set(
+    findDuplicateExerciseGroups(exercises).flatMap((group) => group.map((ex) => ex.id))
+  );
 
   const filtered = combined.filter((ex) => {
     const q = search.toLowerCase();
@@ -4962,7 +4965,16 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
                             Esercizio singolo
                           </Badge>
                         </div>
-                        <div className="flex gap-1 shrink-0">
+                        <div className="flex items-center gap-1 shrink-0">
+                          {duplicateIds.has(ex.id) && (
+                            <button
+                              onClick={() => setShowDuplicatesReview(true)}
+                              className="rounded-lg p-1.5 hover:bg-amber-500/10 text-amber-400"
+                              title="Possibile duplicato: stesso titolo e tipologia di un altro esercizio. Clicca per verificare."
+                            >
+                              <AlertTriangle className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           {ex.image && (
                             <button
                               onClick={() => shareOrFallback({ dataUrl: ex.image, filename: `${(ex.title || "esercizio").replace(/[^a-z0-9]+/gi, "-")}.jpg`, label: ex.title, showToast })}
