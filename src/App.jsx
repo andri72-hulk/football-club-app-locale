@@ -1699,7 +1699,7 @@ function formatTime(d) {
 // Indicatore in alto a destra: mostra a colpo d'occhio se l'ultimo salvataggio
 // è andato a buon fine e a che ora, distinguendo salvataggio locale (IndexedDB)
 // e aggiornamento del file di sincronizzazione (se collegato).
-function SaveStatusIndicator({ saving, storageHealthy, lastSavedAt, syncHandle, lastFileSyncAt }) {
+function SaveStatusIndicator({ saving, storageHealthy, lastSavedAt, syncHandle, lastFileSyncAt, fileSyncWriteCount }) {
   let icon, label, colorClass;
   if (saving) {
     icon = <RefreshCw className="w-3.5 h-3.5 animate-spin" />;
@@ -1724,6 +1724,7 @@ function SaveStatusIndicator({ saving, storageHealthy, lastSavedAt, syncHandle, 
         ? `File sincronizzato aggiornato: ${formatTime(lastFileSyncAt)}`
         : "File di sincronizzazione collegato, in attesa del primo aggiornamento"
     );
+    tooltipLines.push(`Scritture sul file in questa sessione: ${fileSyncWriteCount}`);
   }
 
   return (
@@ -1846,7 +1847,11 @@ export default function FootballClubApp() {
   const [syncNeedsPermission, setSyncNeedsPermission] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState(null);
   const [lastFileSyncAt, setLastFileSyncAt] = useState(null);
+  const [fileSyncWriteCount, setFileSyncWriteCount] = useState(0); // scritture reali sul file Drive in questa sessione, per verificare l'effetto del "salvataggio distanziato"
   const [backupReminderVisible, setBackupReminderVisible] = useState(false);
+  const syncIdleTimeoutRef = React.useRef(null); // scrive dopo qualche secondo di inattività
+  const syncMaxWaitTimeoutRef = React.useRef(null); // forza comunque una scrittura al massimo ogni 2 minuti
+  const pendingSyncPayloadRef = React.useRef(null); // ultimi dati in attesa di essere scritti sul file
 
   useEffect(() => {
     if (loading) return;
@@ -1946,11 +1951,13 @@ export default function FootballClubApp() {
                   // I dati locali sono più recenti (o identici): riallineiamo il file.
                   await writeSyncFile(handle, data).catch(() => {});
                   setLastFileSyncAt(new Date());
+                  setFileSyncWriteCount((n) => n + 1);
                 }
               } else if (data) {
                 // File vuoto/nuovo: lo inizializziamo con i dati locali correnti.
                 await writeSyncFile(handle, data).catch(() => {});
                 setLastFileSyncAt(new Date());
+                setFileSyncWriteCount((n) => n + 1);
               }
             } else {
               setSyncNeedsPermission(true);
@@ -2031,6 +2038,62 @@ export default function FootballClubApp() {
   /* ---------- Salvataggio automatico (con retry) ---------- */
   const saveTimeoutRef = React.useRef(null);
 
+  // Scrittura "distanziata" sul file di sincronizzazione (Drive/OneDrive):
+  // il salvataggio locale (IndexedDB) resta immediato ad ogni modifica, ma la
+  // scrittura sul file collegato viene raggruppata, per evitare che Drive
+  // riempia il cestino con una versione ad ogni singola modifica. Regole:
+  // - se non arrivano altre modifiche per 8 secondi, scrive (comportamento
+  //   "quando smetto di usare l'app per qualche secondo")
+  // - se invece le modifiche continuano senza pause, scrive comunque almeno
+  //   una volta ogni 2 minuti, così non si accumula troppo prima di sincronizzare
+  const flushFileSync = useCallback(() => {
+    if (syncIdleTimeoutRef.current) {
+      clearTimeout(syncIdleTimeoutRef.current);
+      syncIdleTimeoutRef.current = null;
+    }
+    if (syncMaxWaitTimeoutRef.current) {
+      clearTimeout(syncMaxWaitTimeoutRef.current);
+      syncMaxWaitTimeoutRef.current = null;
+    }
+    const payload = pendingSyncPayloadRef.current;
+    pendingSyncPayloadRef.current = null;
+    if (!payload || !syncHandle) return;
+    writeSyncFile(syncHandle, payload)
+      .then(() => {
+        setLastFileSyncAt(new Date());
+        setFileSyncWriteCount((n) => n + 1);
+      })
+      .catch(() => setSyncNeedsPermission(true));
+  }, [syncHandle]);
+
+  const scheduleFileSync = useCallback(
+    (payloadObj) => {
+      if (!syncHandle) return;
+      pendingSyncPayloadRef.current = payloadObj;
+
+      if (syncIdleTimeoutRef.current) clearTimeout(syncIdleTimeoutRef.current);
+      syncIdleTimeoutRef.current = setTimeout(flushFileSync, 8000);
+
+      if (!syncMaxWaitTimeoutRef.current) {
+        syncMaxWaitTimeoutRef.current = setTimeout(flushFileSync, 120000);
+      }
+    },
+    [syncHandle, flushFileSync]
+  );
+
+  // Se la pagina viene chiusa o messa in background con una scrittura ancora
+  // in sospeso, la eseguiamo subito invece di rischiare di perderla (i dati
+  // locali sono comunque già salvati: qui si tratta solo della copia su Drive).
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState === "hidden" && pendingSyncPayloadRef.current) {
+        flushFileSync();
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [flushFileSync]);
+
   const persist = useCallback(
     async (nextSeasons, nextActiveId, shared, nextLibrary) => {
       if (typeof window === "undefined" || !window.storage) {
@@ -2072,19 +2135,15 @@ export default function FootballClubApp() {
           return true;
         });
         setLastSavedAt(new Date());
-        // Se un file di sincronizzazione è collegato, lo aggiorniamo in parallelo
-        // (best-effort: un eventuale errore qui non blocca il salvataggio principale).
+        // Il file di sincronizzazione (se collegato) viene aggiornato in modo
+        // "distanziato" da scheduleFileSync, non ad ogni singolo salvataggio locale.
         if (syncHandle) {
-          writeSyncFile(syncHandle, JSON.parse(payload))
-            .then(() => setLastFileSyncAt(new Date()))
-            .catch(() => {
-              setSyncNeedsPermission(true);
-            });
+          scheduleFileSync(JSON.parse(payload));
         }
       }
       setSaving(false);
     },
-    [sharedMode, showToast, syncHandle]
+    [sharedMode, showToast, syncHandle, scheduleFileSync]
   );
 
   /* ---------- Sincronizzazione file (Google Drive/OneDrive) ---------- */
@@ -2097,6 +2156,7 @@ export default function FootballClubApp() {
       setSyncFileName(handle.name);
       setSyncNeedsPermission(false);
       setLastFileSyncAt(new Date());
+      setFileSyncWriteCount((n) => n + 1);
       showToast("File di sincronizzazione creato e collegato");
     } catch (e) {
       if (e?.name !== "AbortError") showToast("Impossibile creare il file di sincronizzazione", "error");
@@ -2329,6 +2389,7 @@ export default function FootballClubApp() {
               lastSavedAt={lastSavedAt}
               syncHandle={syncHandle}
               lastFileSyncAt={lastFileSyncAt}
+              fileSyncWriteCount={fileSyncWriteCount}
             />
             <div
               title={
