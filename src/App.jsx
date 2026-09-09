@@ -4902,7 +4902,8 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
   const [lightboxSrc, setLightboxSrc] = useState(null);
   const [showDuplicatesReview, setShowDuplicatesReview] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
-  const [moveTarget, setMoveTarget] = useState("");
+  const [addCategoryTarget, setAddCategoryTarget] = useState("");
+  const [removeCategoryTarget, setRemoveCategoryTarget] = useState("");
 
   // Unica fonte di verità: tutti gli esercizi vivono qui come "Esercizio Singolo".
   // I Focus Tecnici possono solo referenziarli (vedi FocusTecnicoForm), non crearne
@@ -4937,6 +4938,15 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
   const allCategoriesPresent = Array.from(
     new Set([...(config.categories || []), ...combined.flatMap((ex) => ex.categories || [])])
   );
+  // Solo le categorie effettivamente presenti su almeno uno degli esercizi
+  // selezionati: ha senso proporre di rimuovere solo ciò che c'è davvero.
+  const categoriesOnSelected = Array.from(
+    new Set(
+      exercises
+        .filter((ex) => selectedIds.has(ex.id))
+        .flatMap((ex) => ex.categories || [])
+    )
+  );
   const grouped = allTypesPresent
     .map((type) => ({
       type,
@@ -4968,25 +4978,36 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
     });
   }
 
-  // Sposta gli esercizi selezionati nella categoria scelta: se si sta filtrando
-  // per una categoria specifica, la sostituisce con quella nuova (comportamento
-  // "sposta da qui a lì"); mantiene comunque le altre eventuali categorie già
-  // presenti sull'esercizio.
-  function moveSelectedToCategory(target) {
+  // Aggiunge la categoria scelta a tutti gli esercizi selezionati (una alla
+  // volta), senza toccare le altre categorie già presenti su ciascuno.
+  function addCategoryToSelected(target) {
     if (!target || selectedIds.size === 0) return;
-    const movingFromSpecificCategory = categoryFilter !== "Tutte" && categoryFilter !== "ND";
     let count = 0;
     exercises.forEach((ex) => {
       if (!selectedIds.has(ex.id)) return;
-      let cats = ex.categories || [];
-      cats = movingFromSpecificCategory ? cats.filter((c) => c !== categoryFilter) : [];
-      if (!cats.includes(target)) cats = [...cats, target];
-      onSaveExercise({ ...ex, categories: cats });
+      const cats = ex.categories || [];
+      if (cats.includes(target)) return;
+      onSaveExercise({ ...ex, categories: [...cats, target] });
       count += 1;
     });
-    showToast(`${count} esercizi spostati in "${target}"`);
-    setSelectedIds(new Set());
-    setMoveTarget("");
+    showToast(count > 0 ? `Categoria "${target}" aggiunta a ${count} esercizi` : `Tutti i selezionati avevano già "${target}"`);
+    setAddCategoryTarget("");
+  }
+
+  // Rimuove la categoria scelta da tutti gli esercizi selezionati (una alla
+  // volta), lasciando intatte le altre.
+  function removeCategoryFromSelected(target) {
+    if (!target || selectedIds.size === 0) return;
+    let count = 0;
+    exercises.forEach((ex) => {
+      if (!selectedIds.has(ex.id)) return;
+      const cats = ex.categories || [];
+      if (!cats.includes(target)) return;
+      onSaveExercise({ ...ex, categories: cats.filter((c) => c !== target) });
+      count += 1;
+    });
+    showToast(`Categoria "${target}" rimossa da ${count} esercizi`);
+    setRemoveCategoryTarget("");
   }
 
   return (
@@ -5059,16 +5080,33 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
 
       {selectedIds.size > 0 && (
         <div className="flex items-center gap-2 mb-4 flex-wrap rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2.5">
-          <p className="text-xs text-sky-300 font-medium">{selectedIds.size} selezionati</p>
-          <select value={moveTarget} onChange={(e) => setMoveTarget(e.target.value)} className={inputClass + " w-auto text-xs py-1.5"}>
-            <option value="">Sposta in categoria...</option>
+          <p className="text-xs text-sky-300 font-medium shrink-0">{selectedIds.size} selezionati</p>
+
+          <select value={addCategoryTarget} onChange={(e) => setAddCategoryTarget(e.target.value)} className={inputClass + " w-auto text-xs py-1.5"}>
+            <option value="">Aggiungi categoria...</option>
             {(config.categories || []).map((c) => (
               <option key={c} value={c}>{c}</option>
             ))}
           </select>
-          <Button className="px-2.5 py-1 text-xs" disabled={!moveTarget} onClick={() => moveSelectedToCategory(moveTarget)}>
-            Sposta
+          <Button className="px-2.5 py-1 text-xs" disabled={!addCategoryTarget} onClick={() => addCategoryToSelected(addCategoryTarget)}>
+            Aggiungi
           </Button>
+
+          <select
+            value={removeCategoryTarget}
+            onChange={(e) => setRemoveCategoryTarget(e.target.value)}
+            disabled={categoriesOnSelected.length === 0}
+            className={inputClass + " w-auto text-xs py-1.5 disabled:opacity-40"}
+          >
+            <option value="">Rimuovi categoria...</option>
+            {categoriesOnSelected.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          <Button variant="danger" className="px-2.5 py-1 text-xs" disabled={!removeCategoryTarget} onClick={() => removeCategoryFromSelected(removeCategoryTarget)}>
+            Rimuovi
+          </Button>
+
           <Button variant="secondary" className="px-2.5 py-1 text-xs" onClick={() => setSelectedIds(new Set())}>
             Annulla selezione
           </Button>
