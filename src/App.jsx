@@ -6540,7 +6540,7 @@ function FormationPickerCard({ formation, onChoose, onEdit, isActive }) {
               <CheckCircle2 className="w-3 h-3" /> Attivo
             </Badge>
           )}
-          {formation.custom && onEdit && (
+          {onEdit && (
             <button onClick={() => onEdit(formation)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400" title="Modifica questo modulo">
               <Edit2 className="w-3.5 h-3.5" />
             </button>
@@ -7051,12 +7051,24 @@ function NewFormationWizard({ onCancel, onSave, initial }) {
 function FormationsSection({ season, updateSeason, library, updateLibrary, showToast }) {
   const lineup = season.lineup || emptyLineup();
   const players = season.players || [];
-  const allFormations = useMemo(() => [...FORMATIONS, ...(library.customFormations || [])], [library.customFormations]);
+  // Un modulo "personalizzato" con lo stesso id di uno standard è la versione
+  // modificata di quest'ultimo (le tue annotazioni): sostituisce quello
+  // originale ovunque, mantenendone però la posizione nell'elenco.
+  const allFormations = useMemo(() => {
+    const custom = library.customFormations || [];
+    const customById = new Map(custom.map((f) => [f.id, f]));
+    const overriddenBuiltIns = FORMATIONS.map((f) => customById.get(f.id) || f);
+    const extraCustom = custom.filter((f) => !FORMATIONS.some((bf) => bf.id === f.id));
+    return [...overriddenBuiltIns, ...extraCustom];
+  }, [library.customFormations]);
   const allFormationsByFormat = useMemo(() => {
     const custom = library.customFormations || [];
+    const customById = new Map(custom.map((f) => [f.id, f]));
     const result = {};
     Object.keys(FORMATIONS_BY_FORMAT).forEach((fmt) => {
-      result[fmt] = [...FORMATIONS_BY_FORMAT[fmt], ...custom.filter((f) => f.format === fmt)];
+      const overriddenBuiltIns = FORMATIONS_BY_FORMAT[fmt].map((f) => customById.get(f.id) || f);
+      const extraCustom = custom.filter((f) => f.format === fmt && !FORMATIONS_BY_FORMAT[fmt].some((bf) => bf.id === f.id));
+      result[fmt] = [...overriddenBuiltIns, ...extraCustom];
     });
     return result;
   }, [library.customFormations]);
@@ -7178,7 +7190,7 @@ function FormationsSection({ season, updateSeason, library, updateLibrary, showT
               <Button variant="secondary" onClick={() => setShowNewFormation(true)}>
                 <Plus className="w-4 h-4" /> Crea modulo
               </Button>
-              {formation.custom && (
+              {formation && (
                 <Button
                   variant="secondary"
                   onClick={() => {
