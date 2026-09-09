@@ -2788,7 +2788,7 @@ function Dashboard({ season, onGoTo, onGoToPlayersBoard }) {
       const present = values.filter((v) => v === "Presente").length;
       return {
         date: formatDateShort(t.date),
-        presenza: values.length ? Math.round((present / values.length) * 100) : 0,
+        presenza: present,
       };
     });
 
@@ -2972,14 +2972,17 @@ function Dashboard({ season, onGoTo, onGoToPlayersBoard }) {
       {/* CHARTS */}
       <div className="grid lg:grid-cols-3 gap-4">
         <Card className="p-5 lg:col-span-2">
-          <p className="text-sm font-semibold text-slate-300 mb-3">Andamento presenze (ultimi allenamenti)</p>
+          <p className="text-sm font-semibold text-slate-300 mb-3">Numero di presenti (ultimi allenamenti)</p>
           {attendanceTrend.length > 0 ? (
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={attendanceTrend}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" />
                 <XAxis dataKey="date" stroke="#64748b" fontSize={12} />
-                <YAxis stroke="#64748b" fontSize={12} unit="%" />
-                <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #ffffff20", borderRadius: 10 }} />
+                <YAxis stroke="#64748b" fontSize={12} allowDecimals={false} />
+                <Tooltip
+                  contentStyle={{ background: "#0f172a", border: "1px solid #ffffff20", borderRadius: 10 }}
+                  formatter={(value) => [value, "Presenti"]}
+                />
                 <Bar dataKey="presenza" fill="#10b981" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -6523,12 +6526,19 @@ function PositionLegend({ formation }) {
   );
 }
 
-function FormationPickerCard({ formation, onChoose }) {
+function FormationPickerCard({ formation, onChoose, isActive }) {
   return (
-    <Card className="p-4 flex flex-col">
-      <div className="mb-2">
-        <p className="text-lg font-extrabold text-slate-100">{formation.name}</p>
-        <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wide">{formation.subtitle}</p>
+    <Card className={`p-4 flex flex-col ${isActive ? "border-emerald-500/50 ring-1 ring-emerald-500/30" : ""}`}>
+      <div className="mb-2 flex items-start justify-between gap-2">
+        <div>
+          <p className="text-lg font-extrabold text-slate-100">{formation.name}</p>
+          <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wide">{formation.subtitle}</p>
+        </div>
+        {isActive && (
+          <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shrink-0">
+            <CheckCircle2 className="w-3 h-3" /> Attivo
+          </Badge>
+        )}
       </div>
       <p className="text-xs text-slate-400 mb-2">{formation.description}</p>
       <p className="text-[11px] font-mono text-slate-500 bg-slate-950/60 rounded-lg px-2.5 py-2 mb-3 break-words">
@@ -6540,9 +6550,15 @@ function FormationPickerCard({ formation, onChoose }) {
           {formation.note}
         </p>
       )}
-      <Button className="mt-4" onClick={() => onChoose(formation.id)}>
-        <CheckCircle2 className="w-4 h-4" /> Scegli questo modulo
-      </Button>
+      {isActive ? (
+        <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300 text-center font-medium">
+          Modulo attualmente in uso — le configurazioni restano invariate
+        </div>
+      ) : (
+        <Button className="mt-4" onClick={() => onChoose(formation.id)}>
+          <CheckCircle2 className="w-4 h-4" /> Scegli questo modulo
+        </Button>
+      )}
     </Card>
   );
 }
@@ -7025,6 +7041,7 @@ function FormationsSection({ season, updateSeason, library, updateLibrary, showT
   const formation = allFormations.find((f) => f.id === lineup.formationId);
   const [picker, setPicker] = useState(null); // { kind: 'position'|'bench', positionId?, benchIndex?, suggestedRole? }
   const [showNewFormation, setShowNewFormation] = useState(false);
+  const [changingFormation, setChangingFormation] = useState(false);
   const [selectedFormat, setSelectedFormat] = useState(() => {
     if (lineup.formationId) {
       const found = Object.entries(allFormationsByFormat).find(([, arr]) => arr.some((f) => f.id === lineup.formationId));
@@ -7040,12 +7057,21 @@ function FormationsSection({ season, updateSeason, library, updateLibrary, showT
   }
 
   function chooseFormation(id) {
+    if (id === lineup.formationId) {
+      // È già il modulo attivo: non azzerare nulla, chiudiamo solo il selettore.
+      setChangingFormation(false);
+      return;
+    }
     updateSeason(() => ({ lineup: { formationId: id, assignments: {}, bench: [] } }));
+    setChangingFormation(false);
+    showToast("Modulo aggiornato");
   }
 
   function changeFormation() {
-    updateSeason(() => ({ lineup: emptyLineup() }));
-    showToast("Modulo azzerato: scegline uno nuovo");
+    // NON azzeriamo più il modulo qui: mostriamo solo il selettore, mantenendo
+    // intatte le configurazioni attuali (giocatori in campo, panchina) finché
+    // l'utente non sceglie davvero un modulo diverso da chooseFormation().
+    setChangingFormation(true);
   }
 
   const assignedIds = new Set([
@@ -7120,7 +7146,10 @@ function FormationsSection({ season, updateSeason, library, updateLibrary, showT
         icon={LayoutGrid}
         action={
           formation && (
-            <div className="flex gap-2 no-print">
+            <div className="flex gap-2 no-print flex-wrap">
+              <Button variant="secondary" onClick={() => setShowNewFormation(true)}>
+                <Plus className="w-4 h-4" /> Crea modulo
+              </Button>
               <Button variant="secondary" onClick={changeFormation}>
                 <ArrowLeftRight className="w-4 h-4" /> Cambia modulo
               </Button>
@@ -7132,7 +7161,7 @@ function FormationsSection({ season, updateSeason, library, updateLibrary, showT
         }
       />
 
-      {!formation && (
+      {(!formation || changingFormation) && (
         <div className="flex items-center justify-between gap-3 mb-5 flex-wrap">
           <div className="flex gap-2 flex-wrap">
             {TEAM_FORMAT_OPTIONS.map((fmt) => (
@@ -7147,20 +7176,29 @@ function FormationsSection({ season, updateSeason, library, updateLibrary, showT
               </button>
             ))}
           </div>
-          <Button variant="secondary" onClick={() => setShowNewFormation(true)}>
-            <Plus className="w-4 h-4" /> Crea nuovo modulo
-          </Button>
+          <div className="flex gap-2">
+            {formation && (
+              <Button variant="secondary" onClick={() => setChangingFormation(false)}>
+                <X className="w-4 h-4" /> Annulla
+              </Button>
+            )}
+            {!formation && (
+              <Button variant="secondary" onClick={() => setShowNewFormation(true)}>
+                <Plus className="w-4 h-4" /> Crea nuovo modulo
+              </Button>
+            )}
+          </div>
         </div>
       )}
 
-      {!formation ? (
+      {!formation || changingFormation ? (
         <div>
           <p className="text-sm text-slate-400 mb-5">
             Scegli il modulo tattico per il campo a {selectedFormat} (portiere + giocatori di movimento). Ogni modulo mostra punti di forza e di debolezza per aiutarti nella scelta.
           </p>
           <div className="grid lg:grid-cols-2 gap-4">
             {allFormationsByFormat[selectedFormat].map((f) => (
-              <FormationPickerCard key={f.id} formation={f} onChoose={chooseFormation} />
+              <FormationPickerCard key={f.id} formation={f} onChoose={chooseFormation} isActive={f.id === lineup.formationId} />
             ))}
           </div>
         </div>
