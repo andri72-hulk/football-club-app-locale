@@ -1116,9 +1116,15 @@ function migrateLibraryCategories(lib) {
   if (!lib) return lib;
   const config = lib.config || defaultConfig();
   const categories = (config.categories || []).map(migrateCategoryLabel);
-  const exercises = (lib.exercises || []).map((ex) =>
-    ex.category ? { ...ex, category: migrateCategoryLabel(ex.category) } : ex
-  );
+  // Migrazione: da campo "category" singolo a "categories" (array, fino a 2),
+  // per permettere a un esercizio di appartenere a due categorie senza doverlo
+  // duplicare. Compatibile con dati salvati prima di questa modifica.
+  const exercises = (lib.exercises || []).map((ex) => {
+    const rawCats = Array.isArray(ex.categories) ? ex.categories : ex.category ? [ex.category] : [];
+    const migratedCats = rawCats.map(migrateCategoryLabel).filter(Boolean).slice(0, 2);
+    const { category, ...rest } = ex;
+    return { ...rest, categories: migratedCats };
+  });
   return { ...lib, config: { ...config, categories }, exercises };
 }
 
@@ -4278,7 +4284,7 @@ function totalFocusMinutes(ft) {
 }
 
 function emptyExercise() {
-  return { id: uid("ex"), title: "", type: "Tecnica", category: "", time: "", goal: "", description: "", image: null };
+  return { id: uid("ex"), title: "", type: "Tecnica", categories: [], time: "", goal: "", description: "", image: null };
 }
 
 function FocusTecniciSection({ focusTecnici, onSave, onDelete, exercises, onSaveExercise, onDeleteExercise, showToast }) {
@@ -4485,12 +4491,13 @@ function PlayBookSection({ exercises, focusTecnici, onSaveExercise, onAddToFocus
     ...Array.from(new Set([...config.exerciseTypes, ...(exercises || []).map((ex) => ex.type).filter(Boolean)])),
   ];
   const allCategoriesPresent = Array.from(
-    new Set([...(config.categories || []), ...(exercises || []).map((ex) => ex.category).filter(Boolean)])
+    new Set([...(config.categories || []), ...(exercises || []).flatMap((ex) => ex.categories || [])])
   );
 
   const matchesFilters = (ex) => {
     const matchesType = typeFilter === "Tutti" || (ex.type || "ND") === typeFilter;
-    const matchesCategory = categoryFilter === "Tutte" || (categoryFilter === "ND" ? !ex.category : ex.category === categoryFilter);
+    const cats = ex.categories || [];
+    const matchesCategory = categoryFilter === "Tutte" || (categoryFilter === "ND" ? cats.length === 0 : cats.includes(categoryFilter));
     return matchesType && matchesCategory;
   };
   // Ordinato per tipologia (nell'ordine di allTypesPresent): così la navigazione
@@ -4563,7 +4570,7 @@ function PlayBookSection({ exercises, focusTecnici, onSaveExercise, onAddToFocus
                     )}
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-slate-200 truncate">{ex.title}</p>
-                      <p className="text-[11px] text-slate-500">{ex.time || "--"}{ex.category ? ` · ${ex.category}` : ""}</p>
+                      <p className="text-[11px] text-slate-500">{ex.time || "--"}{(ex.categories && ex.categories.length) ? ` · ${ex.categories.join(", ")}` : ""}</p>
                     </div>
                   </button>
                 ))}
@@ -4701,7 +4708,9 @@ function PlayBookViewer({ exercises, index, onIndexChange, onClose, onSaveExerci
           <div className="w-full text-left px-1">
             <div className="flex items-center gap-2 flex-wrap mb-1">
               {current.type && <Badge className={EXERCISE_TYPE_STYLES[current.type] || EXERCISE_TYPE_STYLES.Tecnica}>{current.type}</Badge>}
-              {current.category && <Badge className="bg-sky-500/15 text-sky-400 border-sky-500/30">{current.category}</Badge>}
+              {(current.categories || []).map((c) => (
+                <Badge key={c} className="bg-sky-500/15 text-sky-400 border-sky-500/30">{c}</Badge>
+              ))}
               <p className="text-base font-bold text-white">{current.title || "Esercizio"}</p>
               <span className="text-xs text-slate-400">· {current.time || "--"}</span>
             </div>
@@ -4807,13 +4816,32 @@ function ExerciseForm({ initial, onSubmit, onCancel }) {
             ))}
           </select>
         </Field>
-        <Field label="Categoria">
-          <select className={inputClass} value={form.category || ""} onChange={(e) => setForm({ ...form, category: e.target.value })}>
-            <option value="">Nessuna categoria</option>
-            {(config.categories || []).map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
+        <Field label="Categorie (fino a 2)">
+          <div className="flex flex-wrap gap-1.5">
+            {(config.categories || []).map((c) => {
+              const cats = form.categories || [];
+              const selected = cats.includes(c);
+              const disabled = !selected && cats.length >= 2;
+              return (
+                <button
+                  type="button"
+                  key={c}
+                  disabled={disabled}
+                  onClick={() =>
+                    setForm((f) => {
+                      const current = f.categories || [];
+                      return { ...f, categories: selected ? current.filter((x) => x !== c) : [...current, c] };
+                    })
+                  }
+                  className={`rounded-full px-3 py-1.5 text-xs font-medium border transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+                    selected ? "bg-sky-500 text-slate-950 border-sky-500" : "border-white/10 text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  {c}
+                </button>
+              );
+            })}
+          </div>
         </Field>
         <Field label="Tempo di esecuzione">
           <input className={inputClass} value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} placeholder="Es. 10 minuti" />
@@ -4875,6 +4903,8 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
   const [confirmDeleteKey, setConfirmDeleteKey] = useState(null);
   const [lightboxSrc, setLightboxSrc] = useState(null);
   const [showDuplicatesReview, setShowDuplicatesReview] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [moveTarget, setMoveTarget] = useState("");
 
   // Unica fonte di verità: tutti gli esercizi vivono qui come "Esercizio Singolo".
   // I Focus Tecnici possono solo referenziarli (vedi FocusTecnicoForm), non crearne
@@ -4894,7 +4924,8 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
       (ex.description || "").toLowerCase().includes(q);
     const effectiveType = ex.type || "ND";
     const matchesType = typeFilter === "Tutti" || effectiveType === typeFilter;
-    const matchesCategory = categoryFilter === "Tutte" || (categoryFilter === "ND" ? !ex.category : ex.category === categoryFilter);
+    const cats = ex.categories || [];
+    const matchesCategory = categoryFilter === "Tutte" || (categoryFilter === "ND" ? cats.length === 0 : cats.includes(categoryFilter));
     return matchesSearch && matchesType && matchesCategory;
   });
 
@@ -4906,7 +4937,7 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
     ...Array.from(new Set([...config.exerciseTypes, ...combined.map((ex) => ex.type).filter(Boolean)])),
   ];
   const allCategoriesPresent = Array.from(
-    new Set([...(config.categories || []), ...combined.map((ex) => ex.category).filter(Boolean)])
+    new Set([...(config.categories || []), ...combined.flatMap((ex) => ex.categories || [])])
   );
   const grouped = allTypesPresent
     .map((type) => ({
@@ -4928,6 +4959,36 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
   function handleDelete(ex) {
     onDeleteExercise(ex.id);
     setConfirmDeleteKey(null);
+  }
+
+  function toggleSelected(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  // Sposta gli esercizi selezionati nella categoria scelta: se si sta filtrando
+  // per una categoria specifica, la sostituisce con quella nuova (comportamento
+  // "sposta da qui a lì"); mantiene comunque l'eventuale seconda categoria già
+  // presente sull'esercizio, entro il limite di 2.
+  function moveSelectedToCategory(target) {
+    if (!target || selectedIds.size === 0) return;
+    const movingFromSpecificCategory = categoryFilter !== "Tutte" && categoryFilter !== "ND";
+    let count = 0;
+    exercises.forEach((ex) => {
+      if (!selectedIds.has(ex.id)) return;
+      let cats = ex.categories || [];
+      cats = movingFromSpecificCategory ? cats.filter((c) => c !== categoryFilter) : [];
+      if (!cats.includes(target)) cats = [...cats, target].slice(-2);
+      onSaveExercise({ ...ex, categories: cats });
+      count += 1;
+    });
+    showToast(`${count} esercizi spostati in "${target}"`);
+    setSelectedIds(new Set());
+    setMoveTarget("");
   }
 
   return (
@@ -4998,6 +5059,24 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
         ))}
       </div>
 
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-2 mb-4 flex-wrap rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2.5">
+          <p className="text-xs text-sky-300 font-medium">{selectedIds.size} selezionati</p>
+          <select value={moveTarget} onChange={(e) => setMoveTarget(e.target.value)} className={inputClass + " w-auto text-xs py-1.5"}>
+            <option value="">Sposta in categoria...</option>
+            {(config.categories || []).map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          <Button className="px-2.5 py-1 text-xs" disabled={!moveTarget} onClick={() => moveSelectedToCategory(moveTarget)}>
+            Sposta
+          </Button>
+          <Button variant="secondary" className="px-2.5 py-1 text-xs" onClick={() => setSelectedIds(new Set())}>
+            Annulla selezione
+          </Button>
+        </div>
+      )}
+
       {grouped.length === 0 ? (
         <EmptyState icon={Target} text={search ? "Nessun esercizio trovato per questa ricerca." : "Nessun esercizio creato ancora."} />
       ) : (
@@ -5012,6 +5091,12 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
                 {g.items.map((ex) => (
                   <Card key={ex._key} className="p-2.5">
                     <div className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(ex.id)}
+                        onChange={() => toggleSelected(ex.id)}
+                        className="w-4 h-4 rounded shrink-0 accent-sky-500"
+                      />
                       {ex.image && (
                         <button type="button" onClick={() => setLightboxSrc(ex.image)} className="shrink-0">
                           <img src={ex.thumbnail || ex.image} alt={ex.title} className="w-10 h-10 object-cover rounded-lg" />
@@ -5022,9 +5107,9 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
                           <span className="text-sm font-semibold text-slate-100 whitespace-nowrap">{ex.title || "Senza titolo"}</span>
                           <span className="text-[11px] text-slate-500 whitespace-nowrap">{ex.time || "--"}</span>
                           {ex.goal && <span className="text-[11px] text-slate-500 italic">Obiettivo: {ex.goal}</span>}
-                          {ex.category && (
-                            <Badge className="bg-sky-500/15 text-sky-400 border-sky-500/30">{ex.category}</Badge>
-                          )}
+                          {(ex.categories || []).map((c) => (
+                            <Badge key={c} className="bg-sky-500/15 text-sky-400 border-sky-500/30">{c}</Badge>
+                          ))}
                           <Badge className="bg-white/5 text-slate-400 border-white/10">
                             Esercizio singolo
                           </Badge>
@@ -5255,11 +5340,15 @@ function FocusTecnicoForm({ initial, onSubmit, onCancel, standaloneExercises, on
   const [form, setForm] = useState(initial);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("Tutti");
+  const [categoryFilter, setCategoryFilter] = useState("Tutte");
   const [showCreateExercise, setShowCreateExercise] = useState(false);
   const [lightboxSrc, setLightboxSrc] = useState(null);
 
   const selectedSourceIds = new Set(form.exercises.map((ex) => ex.sourceExerciseId).filter(Boolean));
   const totalMinutes = form.exercises.reduce((sum, ex) => sum + parseMinutes(ex.time), 0);
+  const allCategoriesPresent = Array.from(
+    new Set([...(config.categories || []), ...(standaloneExercises || []).flatMap((ex) => ex.categories || [])])
+  );
 
   const filteredLibrary = (standaloneExercises || [])
     .filter((ex) => ex.title)
@@ -5267,7 +5356,9 @@ function FocusTecnicoForm({ initial, onSubmit, onCancel, standaloneExercises, on
       const q = search.trim().toLowerCase();
       const matchesSearch = !q || ex.title.toLowerCase().includes(q) || (ex.goal || "").toLowerCase().includes(q);
       const matchesType = typeFilter === "Tutti" || (ex.type || "Tecnica") === typeFilter;
-      return matchesSearch && matchesType;
+      const cats = ex.categories || [];
+      const matchesCategory = categoryFilter === "Tutte" || (categoryFilter === "ND" ? cats.length === 0 : cats.includes(categoryFilter));
+      return matchesSearch && matchesType && matchesCategory;
     })
     .sort((a, b) => (a.type || "Tecnica").localeCompare(b.type || "Tecnica", "it") || a.title.localeCompare(b.title, "it"));
 
@@ -5404,18 +5495,20 @@ function FocusTecnicoForm({ initial, onSubmit, onCancel, standaloneExercises, on
               className={inputClass + " pl-9"}
             />
           </div>
-          <div className="flex flex-wrap items-center gap-1.5 mb-3">
-            {["Tutti", ...config.exerciseTypes].map((t) => (
-              <button
-                key={t}
-                onClick={() => setTypeFilter(t)}
-                className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-medium border transition-colors ${
-                  typeFilter === t ? "bg-emerald-500 text-slate-950 border-emerald-500" : "border-white/10 text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                {t}
-              </button>
-            ))}
+          <div className="grid grid-cols-2 gap-2 mb-3">
+            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className={inputClass}>
+              <option value="Tutti">Tutte le tipologie</option>
+              {config.exerciseTypes.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+            <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className={inputClass}>
+              <option value="Tutte">Tutte le categorie</option>
+              <option value="ND">Nessuna categoria</option>
+              {allCategoriesPresent.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
           </div>
 
           <div className="rounded-xl border border-white/10 bg-slate-900/60 max-h-[28rem] overflow-y-auto divide-y divide-white/5">
@@ -8882,7 +8975,7 @@ function exerciseBlockHtml(ex, indexLabel, isFirst) {
     block += `<img src="${ex.image}" alt="${ex.title || ""}" style="display:block; width: calc(100% + 32px); margin: 0 -16px 10px -16px; object-fit: contain;" />`;
   }
   block += `<h2>${indexLabel}. ${ex.title || "Esercizio"}</h2>`;
-  block += `<p><span class="badge">${ex.type || "Tecnica"}</span> <strong>Tempo:</strong> ${ex.time || "--"}${ex.category ? ` · ${ex.category}` : ""}</p>`;
+  block += `<p><span class="badge">${ex.type || "Tecnica"}</span> <strong>Tempo:</strong> ${ex.time || "--"}${(ex.categories && ex.categories.length) ? ` · ${ex.categories.join(", ")}` : ""}</p>`;
   if (ex.goal) block += `<p><strong>Obiettivo:</strong> ${ex.goal}</p>`;
   if (ex.description) block += `<p>${ex.description}</p>`;
   block += `</div>`;
