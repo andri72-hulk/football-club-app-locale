@@ -6846,9 +6846,21 @@ function ClickToPlacePitch({ placed, onPlace, disabled }) {
   );
 }
 
+// I moduli standard non hanno un campo "format" proprio (appartengono a un
+// formato solo in base a quale elenco li contiene in FORMATIONS_BY_FORMAT);
+// solo i moduli personalizzati salvati da NewFormationWizard lo hanno
+// esplicitamente. Qui lo ricaviamo comunque, altrimenti la modifica di un
+// modulo standard partirebbe con un formato "undefined" e mandava in errore
+// il resto del modulo (pagina bloccata).
+function resolveFormationFormat(f) {
+  if (f.format) return f.format;
+  const found = Object.entries(FORMATIONS_BY_FORMAT).find(([, arr]) => arr.some((bf) => bf.id === f.id));
+  return found ? found[0] : "9v9";
+}
+
 function formationToWizardForm(f) {
   return {
-    format: f.format,
+    format: resolveFormationFormat(f),
     name: f.name,
     subtitle: f.subtitle || "",
     positionLabels: (f.positions || []).map((p) => p.label),
@@ -6869,6 +6881,7 @@ function NewFormationWizard({ onCancel, onSave, initial }) {
   useEffect(() => {
     setForm((f) => {
       const count = FORMAT_PLAYER_COUNT[f.format];
+      if (!count) return f; // formato non riconosciuto: non tocchiamo nulla invece di rompere l'array
       const labels = [...f.positionLabels];
       while (labels.length < count) labels.push("");
       labels.length = count;
