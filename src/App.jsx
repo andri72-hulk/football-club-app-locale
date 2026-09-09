@@ -1116,12 +1116,12 @@ function migrateLibraryCategories(lib) {
   if (!lib) return lib;
   const config = lib.config || defaultConfig();
   const categories = (config.categories || []).map(migrateCategoryLabel);
-  // Migrazione: da campo "category" singolo a "categories" (array, fino a 2),
-  // per permettere a un esercizio di appartenere a due categorie senza doverlo
+  // Migrazione: da campo "category" singolo a "categories" (array, libera),
+  // per permettere a un esercizio di appartenere a più categorie senza doverlo
   // duplicare. Compatibile con dati salvati prima di questa modifica.
   const exercises = (lib.exercises || []).map((ex) => {
     const rawCats = Array.isArray(ex.categories) ? ex.categories : ex.category ? [ex.category] : [];
-    const migratedCats = rawCats.map(migrateCategoryLabel).filter(Boolean).slice(0, 2);
+    const migratedCats = rawCats.map(migrateCategoryLabel).filter(Boolean);
     const { category, ...rest } = ex;
     return { ...rest, categories: migratedCats };
   });
@@ -4816,24 +4816,22 @@ function ExerciseForm({ initial, onSubmit, onCancel }) {
             ))}
           </select>
         </Field>
-        <Field label="Categorie (fino a 2)">
+        <Field label="Categorie (nessun limite: clicca per aggiungere o rimuovere)">
           <div className="flex flex-wrap gap-1.5">
             {(config.categories || []).map((c) => {
               const cats = form.categories || [];
               const selected = cats.includes(c);
-              const disabled = !selected && cats.length >= 2;
               return (
                 <button
                   type="button"
                   key={c}
-                  disabled={disabled}
                   onClick={() =>
                     setForm((f) => {
                       const current = f.categories || [];
                       return { ...f, categories: selected ? current.filter((x) => x !== c) : [...current, c] };
                     })
                   }
-                  className={`rounded-full px-3 py-1.5 text-xs font-medium border transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+                  className={`rounded-full px-3 py-1.5 text-xs font-medium border transition-colors ${
                     selected ? "bg-sky-500 text-slate-950 border-sky-500" : "border-white/10 text-slate-400 hover:text-slate-200"
                   }`}
                 >
@@ -4972,8 +4970,8 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
 
   // Sposta gli esercizi selezionati nella categoria scelta: se si sta filtrando
   // per una categoria specifica, la sostituisce con quella nuova (comportamento
-  // "sposta da qui a lì"); mantiene comunque l'eventuale seconda categoria già
-  // presente sull'esercizio, entro il limite di 2.
+  // "sposta da qui a lì"); mantiene comunque le altre eventuali categorie già
+  // presenti sull'esercizio.
   function moveSelectedToCategory(target) {
     if (!target || selectedIds.size === 0) return;
     const movingFromSpecificCategory = categoryFilter !== "Tutte" && categoryFilter !== "ND";
@@ -4982,7 +4980,7 @@ function ExercisesLibrarySection({ exercises, onSaveExercise, onDeleteExercise, 
       if (!selectedIds.has(ex.id)) return;
       let cats = ex.categories || [];
       cats = movingFromSpecificCategory ? cats.filter((c) => c !== categoryFilter) : [];
-      if (!cats.includes(target)) cats = [...cats, target].slice(-2);
+      if (!cats.includes(target)) cats = [...cats, target];
       onSaveExercise({ ...ex, categories: cats });
       count += 1;
     });
@@ -6883,11 +6881,10 @@ const PITCH_X_MAX = (66 / 68) * 100;
 const PITCH_Y_MIN = 2;
 const PITCH_Y_MAX = 98;
 
-function ClickToPlacePitch({ placed, onPlace, disabled }) {
+function ClickToPlacePitch({ placed, onPlace, onMove, selectedId, onSelect, disabled }) {
   const containerRef = React.useRef(null);
 
-  function handleClick(e) {
-    if (disabled || !containerRef.current) return;
+  function cellFromEvent(e) {
     const rect = containerRef.current.getBoundingClientRect();
     const relX = ((e.clientX - rect.left) / rect.width) * 100;
     const relY = ((e.clientY - rect.top) / rect.height) * 100;
@@ -6899,13 +6896,30 @@ function ClickToPlacePitch({ placed, onPlace, disabled }) {
     const row = Math.min(PLACEMENT_GRID_ROWS - 1, Math.max(0, Math.floor(((relY - PITCH_Y_MIN) / pitchHeight) * PLACEMENT_GRID_ROWS)));
     const x = PITCH_X_MIN + ((col + 0.5) / PLACEMENT_GRID_COLS) * pitchWidth;
     const y = PITCH_Y_MIN + ((row + 0.5) / PLACEMENT_GRID_ROWS) * pitchHeight;
-    onPlace(x, y);
+    return { x, y };
+  }
+
+  function handleBackgroundClick(e) {
+    if (!containerRef.current) return;
+    const { x, y } = cellFromEvent(e);
+    if (selectedId && onMove) {
+      // Una posizione è selezionata: questo click la sposta qui (con eventuale scambio, gestito da onMove).
+      onMove(selectedId, x, y);
+    } else if (!disabled) {
+      onPlace(x, y);
+    }
+  }
+
+  function handlePinClick(e, p) {
+    e.stopPropagation(); // non deve anche attivare il click di sfondo sulla stessa cella
+    if (!onSelect) return;
+    onSelect(selectedId === p.id ? null : p.id); // ri-clicca lo stesso pallino per deselezionare
   }
 
   return (
     <div
       ref={containerRef}
-      onClick={handleClick}
+      onClick={handleBackgroundClick}
       className={`relative w-full rounded-2xl overflow-hidden border border-white/10 shadow-xl ${disabled ? "" : "cursor-crosshair"}`}
       style={{ aspectRatio: "68 / 100" }}
     >
@@ -6923,18 +6937,28 @@ function ClickToPlacePitch({ placed, onPlace, disabled }) {
           })}
         </g>
       </svg>
-      {placed.map((p, i) => (
-        <div
-          key={p.id}
-          style={{ left: `${p.x}%`, top: `${p.y}%` }}
-          className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center pointer-events-none"
-        >
-          <div className="w-9 h-9 rounded-full border-2 border-emerald-400 bg-slate-950/85 flex items-center justify-center text-[10px] font-bold text-white">
-            {p.label}
-          </div>
-          <span className="mt-0.5 text-[9px] text-white/70">{i + 1}</span>
-        </div>
-      ))}
+      {placed.map((p, i) => {
+        const isSelected = selectedId === p.id;
+        return (
+          <button
+            key={p.id}
+            type="button"
+            onClick={(e) => handlePinClick(e, p)}
+            style={{ left: `${p.x}%`, top: `${p.y}%` }}
+            className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center"
+            title={onSelect ? "Clicca per selezionare, poi clicca dove spostarlo" : undefined}
+          >
+            <div
+              className={`w-9 h-9 rounded-full border-2 flex items-center justify-center text-[10px] font-bold text-white transition-colors ${
+                isSelected ? "border-amber-400 bg-amber-500/40 animate-pulse" : "border-emerald-400 bg-slate-950/85"
+              }`}
+            >
+              {p.label}
+            </div>
+            <span className="mt-0.5 text-[9px] text-white/70">{i + 1}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -6968,6 +6992,7 @@ function NewFormationWizard({ onCancel, onSave, initial }) {
   const [step, setStep] = useState(1);
   const [form, setForm] = useState(() => (initial ? formationToWizardForm(initial) : emptyNewFormation()));
   const [placed, setPlaced] = useState(() => (initial ? initial.positions || [] : []));
+  const [selectedPlacementId, setSelectedPlacementId] = useState(null);
 
   const requiredCount = FORMAT_PLAYER_COUNT[form.format];
 
@@ -7019,7 +7044,29 @@ function NewFormationWizard({ onCancel, onSave, initial }) {
   }
 
   function undoLastPlacement() {
+    setSelectedPlacementId(null);
     setPlaced(placed.slice(0, -1));
+  }
+
+  // Sposta una posizione già piazzata nella nuova cella; se quella cella è già
+  // occupata da un'altra posizione, le due si scambiano di posto invece di
+  // sovrapporsi.
+  function movePlacement(id, x, y) {
+    setPlaced((prev) => {
+      const targetIdx = prev.findIndex((p) => p.id === id);
+      if (targetIdx === -1) return prev;
+      const occupiedIdx = prev.findIndex((p) => p.id !== id && p.x === x && p.y === y);
+      const next = [...prev];
+      if (occupiedIdx !== -1) {
+        const swappedFrom = { x: next[targetIdx].x, y: next[targetIdx].y };
+        next[targetIdx] = { ...next[targetIdx], x, y };
+        next[occupiedIdx] = { ...next[occupiedIdx], x: swappedFrom.x, y: swappedFrom.y };
+      } else {
+        next[targetIdx] = { ...next[targetIdx], x, y };
+      }
+      return next;
+    });
+    setSelectedPlacementId(null);
   }
 
   function handleSave() {
@@ -7045,14 +7092,21 @@ function NewFormationWizard({ onCancel, onSave, initial }) {
       <div>
         <p className="text-sm text-slate-400 mb-4">
           {done
-            ? "Tutte le posizioni sono state piazzate. Controlla e salva il modulo."
+            ? "Tutte le posizioni sono state piazzate. Clicca un pallino per selezionarlo, poi clicca una nuova cella per spostarlo (se è occupata, le due posizioni si scambiano). Controlla e salva il modulo."
             : `Clicca sul campo per posizionare: ${form.positionLabels[placed.length]} (${placed.length + 1} di ${requiredCount})`}
         </p>
         <div style={{ maxWidth: 320 }} className="mx-auto">
-          <ClickToPlacePitch placed={placed} onPlace={placeNext} disabled={done} />
+          <ClickToPlacePitch
+            placed={placed}
+            onPlace={placeNext}
+            onMove={movePlacement}
+            selectedId={selectedPlacementId}
+            onSelect={setSelectedPlacementId}
+            disabled={done}
+          />
         </div>
         <div className="flex justify-between gap-2 mt-5">
-          <Button variant="secondary" onClick={() => setStep(1)}>
+          <Button variant="secondary" onClick={() => { setSelectedPlacementId(null); setStep(1); }}>
             <ChevronLeft className="w-4 h-4" /> Torna al modulo
           </Button>
           <div className="flex gap-2">
