@@ -6526,7 +6526,7 @@ function PositionLegend({ formation }) {
   );
 }
 
-function FormationPickerCard({ formation, onChoose, isActive }) {
+function FormationPickerCard({ formation, onChoose, onEdit, isActive }) {
   return (
     <Card className={`p-4 flex flex-col ${isActive ? "border-emerald-500/50 ring-1 ring-emerald-500/30" : ""}`}>
       <div className="mb-2 flex items-start justify-between gap-2">
@@ -6534,11 +6534,18 @@ function FormationPickerCard({ formation, onChoose, isActive }) {
           <p className="text-lg font-extrabold text-slate-100">{formation.name}</p>
           <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wide">{formation.subtitle}</p>
         </div>
-        {isActive && (
-          <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shrink-0">
-            <CheckCircle2 className="w-3 h-3" /> Attivo
-          </Badge>
-        )}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {isActive && (
+            <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/40">
+              <CheckCircle2 className="w-3 h-3" /> Attivo
+            </Badge>
+          )}
+          {formation.custom && onEdit && (
+            <button onClick={() => onEdit(formation)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400" title="Modifica questo modulo">
+              <Edit2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
       </div>
       <p className="text-xs text-slate-400 mb-2">{formation.description}</p>
       <p className="text-[11px] font-mono text-slate-500 bg-slate-950/60 rounded-lg px-2.5 py-2 mb-3 break-words">
@@ -6839,10 +6846,23 @@ function ClickToPlacePitch({ placed, onPlace, disabled }) {
   );
 }
 
-function NewFormationWizard({ onCancel, onSave }) {
+function formationToWizardForm(f) {
+  return {
+    format: f.format,
+    name: f.name,
+    subtitle: f.subtitle || "",
+    positionLabels: (f.positions || []).map((p) => p.label),
+    strengths: f.strengths && f.strengths.length ? f.strengths : [""],
+    weaknesses: f.weaknesses && f.weaknesses.length ? f.weaknesses : [""],
+    note: f.note || "",
+  };
+}
+
+function NewFormationWizard({ onCancel, onSave, initial }) {
+  const isEditing = !!initial;
   const [step, setStep] = useState(1);
-  const [form, setForm] = useState(emptyNewFormation());
-  const [placed, setPlaced] = useState([]);
+  const [form, setForm] = useState(() => (initial ? formationToWizardForm(initial) : emptyNewFormation()));
+  const [placed, setPlaced] = useState(() => (initial ? initial.positions || [] : []));
 
   const requiredCount = FORMAT_PLAYER_COUNT[form.format];
 
@@ -6880,7 +6900,9 @@ function NewFormationWizard({ onCancel, onSave }) {
   const step1Valid = form.name.trim() && form.positionLabels.length === requiredCount && form.positionLabels.every((l) => l);
 
   function goToPlacement() {
-    setPlaced([]);
+    // In modifica: se le posizioni non sono cambiate, non serve ripiazzarle da capo.
+    const labelsUnchanged = placed.length === requiredCount && placed.every((p, i) => p.label === form.positionLabels[i]);
+    if (!labelsUnchanged) setPlaced([]);
     setStep(2);
   }
 
@@ -6897,7 +6919,7 @@ function NewFormationWizard({ onCancel, onSave }) {
   function handleSave() {
     const structureLabel = form.positionLabels.join(" — ");
     onSave({
-      id: uid("customf"),
+      id: isEditing ? initial.id : uid("customf"),
       format: form.format,
       name: form.name.trim(),
       subtitle: form.subtitle.trim(),
@@ -6932,7 +6954,7 @@ function NewFormationWizard({ onCancel, onSave }) {
               <Button variant="secondary" onClick={undoLastPlacement}>Annulla ultimo</Button>
             )}
             <Button disabled={!done} onClick={handleSave}>
-              <Save className="w-4 h-4" /> Salva modulo
+              <Save className="w-4 h-4" /> {isEditing ? "Salva modifiche" : "Salva modulo"}
             </Button>
           </div>
         </div>
@@ -7041,6 +7063,7 @@ function FormationsSection({ season, updateSeason, library, updateLibrary, showT
   const formation = allFormations.find((f) => f.id === lineup.formationId);
   const [picker, setPicker] = useState(null); // { kind: 'position'|'bench', positionId?, benchIndex?, suggestedRole? }
   const [showNewFormation, setShowNewFormation] = useState(false);
+  const [editingFormation, setEditingFormation] = useState(null); // modulo personalizzato in modifica, null = creazione
   const [changingFormation, setChangingFormation] = useState(false);
   const [selectedFormat, setSelectedFormat] = useState(() => {
     if (lineup.formationId) {
@@ -7050,10 +7073,15 @@ function FormationsSection({ season, updateSeason, library, updateLibrary, showT
     return TEAM_FORMAT_OPTIONS.includes(season.teamFormat) ? season.teamFormat : "9v9";
   });
 
-  function saveCustomFormation(newFormation) {
-    updateLibrary((lib) => ({ customFormations: [...(lib.customFormations || []), newFormation] }));
+  function saveCustomFormation(savedFormation) {
+    updateLibrary((lib) => {
+      const list = lib.customFormations || [];
+      const exists = list.some((f) => f.id === savedFormation.id);
+      return { customFormations: exists ? list.map((f) => (f.id === savedFormation.id ? savedFormation : f)) : [...list, savedFormation] };
+    });
     setShowNewFormation(false);
-    showToast("Modulo personalizzato creato");
+    setEditingFormation(null);
+    showToast(editingFormation ? "Modulo aggiornato" : "Modulo personalizzato creato");
   }
 
   function chooseFormation(id) {
@@ -7150,6 +7178,17 @@ function FormationsSection({ season, updateSeason, library, updateLibrary, showT
               <Button variant="secondary" onClick={() => setShowNewFormation(true)}>
                 <Plus className="w-4 h-4" /> Crea modulo
               </Button>
+              {formation.custom && (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setEditingFormation(formation);
+                    setShowNewFormation(true);
+                  }}
+                >
+                  <Edit2 className="w-4 h-4" /> Modifica modulo
+                </Button>
+              )}
               <Button variant="secondary" onClick={changeFormation}>
                 <ArrowLeftRight className="w-4 h-4" /> Cambia modulo
               </Button>
@@ -7198,7 +7237,16 @@ function FormationsSection({ season, updateSeason, library, updateLibrary, showT
           </p>
           <div className="grid lg:grid-cols-2 gap-4">
             {allFormationsByFormat[selectedFormat].map((f) => (
-              <FormationPickerCard key={f.id} formation={f} onChoose={chooseFormation} isActive={f.id === lineup.formationId} />
+              <FormationPickerCard
+                key={f.id}
+                formation={f}
+                onChoose={chooseFormation}
+                onEdit={(ft) => {
+                  setEditingFormation(ft);
+                  setShowNewFormation(true);
+                }}
+                isActive={f.id === lineup.formationId}
+              />
             ))}
           </div>
         </div>
@@ -7291,9 +7339,24 @@ function FormationsSection({ season, updateSeason, library, updateLibrary, showT
         onUpdateStatus={updatePlayerStatus}
       />
 
-      <Modal open={showNewFormation} onClose={() => setShowNewFormation(false)} title="Crea nuovo modulo" wide>
+      <Modal
+        open={showNewFormation}
+        onClose={() => {
+          setShowNewFormation(false);
+          setEditingFormation(null);
+        }}
+        title={editingFormation ? "Modifica modulo" : "Crea nuovo modulo"}
+        wide
+      >
         {showNewFormation && (
-          <NewFormationWizard onCancel={() => setShowNewFormation(false)} onSave={saveCustomFormation} />
+          <NewFormationWizard
+            initial={editingFormation}
+            onCancel={() => {
+              setShowNewFormation(false);
+              setEditingFormation(null);
+            }}
+            onSave={saveCustomFormation}
+          />
         )}
       </Modal>
     </div>
