@@ -380,6 +380,7 @@ function defaultConfig() {
     medicalStatuses: [...MEDICAL_STATUS],
     exerciseTypes: [...EXERCISE_TYPES],
     categories: [...DEFAULT_CATEGORIES],
+    dossierCategories: [...DOSSIER_CATEGORIES],
   };
 }
 
@@ -8180,6 +8181,7 @@ const CONFIG_TABLES = [
   { key: "medicalStatuses", label: "Stato Medico", hint: "" },
   { key: "exerciseTypes", label: "Tipologia Esercizi", hint: "" },
   { key: "categories", label: "Categorie", hint: "Fasce d'età/categoria del club, usate per taggare gli esercizi" },
+  { key: "dossierCategories", label: "Categorie Dossier", hint: "Usate per organizzare i documenti nel Dossier (es. Metodologia, Notizie)" },
 ];
 
 function ConfigurationsSection({ library, updateLibrary, showToast }) {
@@ -8328,6 +8330,8 @@ function fileSizeLabel(bytes) {
 }
 
 function DossierSection({ library, updateLibrary, showToast }) {
+  const config = useConfig();
+  const dossierCategories = config.dossierCategories && config.dossierCategories.length ? config.dossierCategories : DOSSIER_CATEGORIES;
   const dossier = library.dossier || [];
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("Tutti");
@@ -8403,6 +8407,13 @@ function DossierSection({ library, updateLibrary, showToast }) {
     document.body.removeChild(a);
   }
 
+  function moveDocumentCategory(id, newCategory) {
+    updateLibrary((lib) => ({
+      dossier: (lib.dossier || []).map((d) => (d.id === id ? { ...d, category: newCategory } : d)),
+    }));
+    showToast(`Spostato in "${newCategory}"`);
+  }
+
   const filtered = dossier.filter((d) => {
     const q = search.toLowerCase();
     const matchesSearch = !q || d.title.toLowerCase().includes(q) || d.fileName.toLowerCase().includes(q);
@@ -8437,7 +8448,7 @@ function DossierSection({ library, updateLibrary, showToast }) {
       </div>
 
       <div className="flex items-center gap-2 mb-5 overflow-x-auto pb-1">
-        {["Tutti", ...DOSSIER_CATEGORIES].map((c) => (
+        {["Tutti", ...dossierCategories].map((c) => (
           <button
             key={c}
             onClick={() => setCategoryFilter(c)}
@@ -8463,7 +8474,16 @@ function DossierSection({ library, updateLibrary, showToast }) {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <p className="text-sm font-semibold text-slate-100 truncate">{d.title}</p>
-                    <Badge className="bg-white/5 text-slate-300 border-white/10">{d.category}</Badge>
+                    <select
+                      value={d.category}
+                      onChange={(e) => moveDocumentCategory(d.id, e.target.value)}
+                      title="Sposta in un'altra categoria"
+                      className="bg-white/5 text-slate-300 border border-white/10 rounded-full text-[11px] font-medium px-2.5 py-1 cursor-pointer hover:bg-white/10"
+                    >
+                      {dossierCategories.map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
                   </div>
                   <p className="text-[11px] text-slate-500 truncate">
                     {d.fileName} · {fileSizeLabel(d.fileSize)} · {formatDate(d.uploadedAt)}
@@ -8523,9 +8543,11 @@ function DossierSection({ library, updateLibrary, showToast }) {
 }
 
 function DossierUploadForm({ fileName, fileSize, onSubmit, onCancel }) {
+  const config = useConfig();
+  const dossierCategories = config.dossierCategories && config.dossierCategories.length ? config.dossierCategories : DOSSIER_CATEGORIES;
   const defaultTitle = fileName.replace(/\.[^/.]+$/, "");
   const [title, setTitle] = useState(defaultTitle);
-  const [category, setCategory] = useState(DOSSIER_CATEGORIES[0]);
+  const [category, setCategory] = useState(dossierCategories[0]);
 
   return (
     <div>
@@ -8541,7 +8563,7 @@ function DossierUploadForm({ fileName, fileSize, onSubmit, onCancel }) {
       </Field>
       <Field label="Categoria">
         <select className={inputClass} value={category} onChange={(e) => setCategory(e.target.value)}>
-          {DOSSIER_CATEGORIES.map((c) => (
+          {dossierCategories.map((c) => (
             <option key={c} value={c}>{c}</option>
           ))}
         </select>
