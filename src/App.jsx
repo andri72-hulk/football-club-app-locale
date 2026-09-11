@@ -32,6 +32,18 @@ const ROLE_COLORS = {
   Attaccante: "bg-rose-500/15 text-rose-400 border-rose-500/30",
 };
 
+// Sfondo pastello molto lieve per la tessera del giocatore in griglia, in base
+// al ruolo principale — stessa tinta cromatica dei badge ROLE_COLORS, ma con
+// opacità minima per restare leggibile senza appesantire la vista d'insieme.
+// Applicato come style inline (non classe Tailwind) per essere certi che
+// sovrascriva sempre lo sfondo scuro di base della card.
+const ROLE_CARD_BG = {
+  Portiere: "rgba(245, 158, 11, 0.07)",
+  Difensore: "rgba(14, 165, 233, 0.07)",
+  Centrocampista: "rgba(16, 185, 129, 0.07)",
+  Attaccante: "rgba(244, 63, 94, 0.07)",
+};
+
 const POSITIONS = ["Centro", "Destra", "Sinistra"];
 const FEET = ["Destro", "Sinistro", "Ambidestro"];
 
@@ -1561,9 +1573,9 @@ function InlinePlayerSelect({ value, options, onChange, className = "" }) {
   );
 }
 
-function Card({ children, className = "" }) {
+function Card({ children, className = "", style }) {
   return (
-    <div className={`rounded-2xl border border-white/10 bg-slate-900/60 backdrop-blur-sm ${className}`}>
+    <div className={`rounded-2xl border border-white/10 bg-slate-900/60 backdrop-blur-sm ${className}`} style={style}>
       {children}
     </div>
   );
@@ -3495,7 +3507,11 @@ function PlayersSection({ season, updateSeason, showToast, view, setView, jumpTo
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "16px" }}>
           {filtered.map((p) => (
-            <Card key={p.id} className="p-3 sm:p-4 hover:border-emerald-500/40 transition-colors h-full flex flex-col items-center text-center relative">
+            <Card
+              key={p.id}
+              className="p-3 sm:p-4 hover:border-emerald-500/40 transition-colors h-full flex flex-col items-center text-center relative"
+              style={{ backgroundColor: ROLE_CARD_BG[p.role] }}
+            >
               <PlayerRatingBadge
                 rating={playerOverallRating(p)}
                 className="absolute top-2 right-2"
@@ -7413,19 +7429,22 @@ function NewFormationWizard({ onCancel, onSave, initial }) {
   );
 }
 
+// Un modulo "personalizzato" con lo stesso id di uno standard è la versione
+// modificata di quest'ultimo (le tue annotazioni): sostituisce quello
+// originale ovunque, mantenendone però la posizione nell'elenco. Funzione
+// condivisa tra la sezione Moduli e l'esportazione PDF del modulo corrente.
+function resolveAllFormations(customFormations) {
+  const custom = customFormations || [];
+  const customById = new Map(custom.map((f) => [f.id, f]));
+  const overriddenBuiltIns = FORMATIONS.map((f) => customById.get(f.id) || f);
+  const extraCustom = custom.filter((f) => !FORMATIONS.some((bf) => bf.id === f.id));
+  return [...overriddenBuiltIns, ...extraCustom];
+}
+
 function FormationsSection({ season, updateSeason, library, updateLibrary, showToast }) {
   const lineup = season.lineup || emptyLineup();
   const players = season.players || [];
-  // Un modulo "personalizzato" con lo stesso id di uno standard è la versione
-  // modificata di quest'ultimo (le tue annotazioni): sostituisce quello
-  // originale ovunque, mantenendone però la posizione nell'elenco.
-  const allFormations = useMemo(() => {
-    const custom = library.customFormations || [];
-    const customById = new Map(custom.map((f) => [f.id, f]));
-    const overriddenBuiltIns = FORMATIONS.map((f) => customById.get(f.id) || f);
-    const extraCustom = custom.filter((f) => !FORMATIONS.some((bf) => bf.id === f.id));
-    return [...overriddenBuiltIns, ...extraCustom];
-  }, [library.customFormations]);
+  const allFormations = useMemo(() => resolveAllFormations(library.customFormations), [library.customFormations]);
   const allFormationsByFormat = useMemo(() => {
     const custom = library.customFormations || [];
     const customById = new Map(custom.map((f) => [f.id, f]));
@@ -7525,22 +7544,7 @@ function FormationsSection({ season, updateSeason, library, updateLibrary, showT
   }
 
   function handlePrint() {
-    if (!formation) return;
-    let body = `<h1>${season.teamName || ""}</h1>`;
-    body += `<h2>${formation.name} — ${formation.subtitle}</h2>`;
-    body += `<p>${formation.structureLabel}</p>`;
-    body += buildPitchHTML(formation, lineup.assignments || {}, players);
-    if ((lineup.bench || []).length > 0) {
-      body += `<h2>Panchina</h2><ul>${(lineup.bench || [])
-        .map((id) => {
-          const p = players.find((pl) => pl.id === id);
-          return p ? `<li>${p.name} — ${p.role}</li>` : "";
-        })
-        .join("")}</ul>`;
-    }
-    body += `<h2>Punti di forza</h2><ul>${formation.strengths.map((s) => `<li>${s}</li>`).join("")}</ul>`;
-    body += `<h2>Punti di debolezza</h2><ul>${formation.weaknesses.map((s) => `<li>${s}</li>`).join("")}</ul>`;
-    downloadPrintableHTML(`modulo-${formation.name}.html`, "Modulo in campo", body);
+    downloadFormationSheet(formation, lineup, players, season.teamName);
   }
 
   return (
@@ -8749,8 +8753,58 @@ function DossierUploadForm({ fileName, fileSize, onSubmit, onCancel }) {
    ============================================================ */
 
 function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, library, setLibrary, showToast, lastSavedAt, onExported }) {
+  const config = useConfig();
   const fileInputRef = React.useRef(null);
   const [importPreview, setImportPreview] = useState(null); // { data, fileName, isOlder }
+
+  // --- Stato per i selettori della sezione "Esportazioni PDF" ---
+  const [pdfFocusId, setPdfFocusId] = useState("");
+  const [pdfExType, setPdfExType] = useState("");
+  const [pdfExCategory, setPdfExCategory] = useState("Tutte");
+  const [pdfExerciseId, setPdfExerciseId] = useState("");
+  const [pdfCategoryType, setPdfCategoryType] = useState("");
+
+  const exercises = library.exercises || [];
+  const allExerciseTypes = Array.from(new Set([...config.exerciseTypes, ...exercises.map((e) => e.type).filter(Boolean)]));
+  const allExerciseCategories = Array.from(new Set([...(config.categories || []), ...exercises.flatMap((e) => e.categories || [])]));
+  const filteredExercisesForPdf = exercises.filter((ex) => {
+    const matchesType = !pdfExType || (ex.type || "ND") === pdfExType;
+    const cats = ex.categories || [];
+    const matchesCategory = pdfExCategory === "Tutte" ? true : pdfExCategory === "ND" ? cats.length === 0 : cats.includes(pdfExCategory);
+    return matchesType && matchesCategory;
+  });
+  const allFormationsForPdf = resolveAllFormations(library.customFormations);
+  const currentFormationForPdf = allFormationsForPdf.find((f) => f.id === activeSeason?.lineup?.formationId);
+
+  function handleExportCurrentFormationPdf() {
+    if (!currentFormationForPdf) return showToast("Nessun modulo attivo per questa stagione", "error");
+    downloadFormationSheet(currentFormationForPdf, activeSeason.lineup, activeSeason.players || [], activeSeason.teamName);
+  }
+
+  function handleExportFocusPdf() {
+    const ft = (activeSeason?.focusTecnici || []).find((f) => f.id === pdfFocusId);
+    if (!ft) return showToast("Seleziona un Focus Tecnico da esportare", "error");
+    downloadFocusSheet(ft);
+  }
+
+  function handleExportExercisePdf() {
+    const ex = exercises.find((e) => e.id === pdfExerciseId);
+    if (!ex) return showToast("Seleziona un esercizio da esportare", "error");
+    downloadExerciseSheet(ex);
+  }
+
+  function handleExportExercisesByTypePdf() {
+    if (!pdfCategoryType) return showToast("Seleziona una tipologia da esportare", "error");
+    const items = exercises.filter((ex) => (ex.type || "ND") === pdfCategoryType);
+    if (items.length === 0) return showToast("Nessun esercizio per questa tipologia", "error");
+    downloadCategorySheet(pdfCategoryType, items);
+  }
+
+  function handleExportPlaybookPdf() {
+    if (exercises.length === 0) return showToast("Nessun esercizio in libreria", "error");
+    const typesOrder = ["ND", ...allExerciseTypes];
+    downloadPlayBookSheet(exercises, typesOrder);
+  }
 
   function exportFullJSON() {
     const payload = JSON.stringify(
@@ -8836,7 +8890,10 @@ function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, l
       ];
       const base = BASE_STAT_KEYS.map((s) => p.baseStats?.[s.key] ?? "");
       const mental = MENTAL_STAT_KEYS.map((s) => p.mentalStats?.[s.key] ?? "");
-      const tech = TECH_TACTIC_STAT_KEYS.map((s) => p.techTacticStats?.[s.key] ?? "");
+      // Il Portiere non ha voti Tecnico/Tattiche (ha le proprie Statistiche
+      // Portiere): la colonna resta vuota invece di mostrare un valore non
+      // realmente assegnato per quel ruolo.
+      const tech = TECH_TACTIC_STAT_KEYS.map((s) => (p.role === "Portiere" ? "" : p.techTacticStats?.[s.key] ?? ""));
       const gk = GK_STAT_KEYS.map((s) => (p.role === "Portiere" ? p.gkStats?.[s.key] ?? "" : ""));
       return [...anagrafica, ...base, ...mental, ...tech, ...gk];
     });
@@ -9226,41 +9283,120 @@ function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, l
     <div>
       <SectionTitle eyebrow="Backup & Report" title="Esporta Dati" icon={FileSpreadsheet} />
 
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 mb-5">
+        <div className="flex items-center gap-2 mb-2">
+          <Save className="w-4.5 h-4.5 text-emerald-400" />
+          <h3 className="text-sm font-semibold text-white">Backup Completo</h3>
+        </div>
+        <p className="text-xs text-slate-500 mb-4">
+          Scarica tutte le stagioni con giocatori, allenamenti e partite. Usalo come backup o per trasferire i dati su un altro dispositivo.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={exportFullJSON}><Download className="w-4 h-4" /> Esporta JSON</Button>
+          <Button variant="secondary" onClick={handleImportClick}><Upload className="w-4 h-4" /> Importa JSON</Button>
+          <input ref={fileInputRef} type="file" accept="application/json" className="hidden" onChange={handleImportFile} />
+        </div>
+        {importPreview?.isOlder && (
+          <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
+            <p className="text-xs text-amber-300 mb-2">
+              <AlertCircle className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />
+              Il file <strong>{importPreview.fileName}</strong> risale al {formatDateTime(importPreview.data.exportedAt)}, mentre i dati già presenti su questo dispositivo sono più recenti (ultimo salvataggio: {formatDateTime(lastSavedAt?.toISOString())}). Importarlo sovrascriverà i dati più recenti con quelli del backup più vecchio.
+            </p>
+            <div className="flex gap-2">
+              <Button variant="secondary" className="px-2.5 py-1 text-xs" onClick={() => setImportPreview(null)}>Annulla</Button>
+              <Button
+                variant="danger"
+                className="px-2.5 py-1 text-xs"
+                onClick={() => {
+                  applyImportedData(importPreview.data);
+                  setImportPreview(null);
+                }}
+              >
+                Importa comunque
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="grid sm:grid-cols-2 gap-4 mb-6">
         <Card className="p-5">
           <div className="flex items-center gap-2 mb-2">
-            <Save className="w-4.5 h-4.5 text-emerald-400" />
-            <p className="text-sm font-bold text-slate-100">Backup completo (JSON)</p>
+            <FileText className="w-4.5 h-4.5 text-emerald-400" />
+            <p className="text-sm font-bold text-slate-100">Esportazioni PDF</p>
           </div>
           <p className="text-xs text-slate-500 mb-4">
-            Scarica tutte le stagioni con giocatori, allenamenti e partite. Usalo come backup o per trasferire i dati su un altro dispositivo.
+            Schede stampabili pronte per PDF (si aprono come pagina HTML: usa "Stampa" del browser e scegli "Salva come PDF").
           </p>
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={exportFullJSON}><Download className="w-4 h-4" /> Esporta JSON</Button>
-            <Button variant="secondary" onClick={handleImportClick}><Upload className="w-4 h-4" /> Importa JSON</Button>
-            <input ref={fileInputRef} type="file" accept="application/json" className="hidden" onChange={handleImportFile} />
-          </div>
-          {importPreview?.isOlder && (
-            <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
-              <p className="text-xs text-amber-300 mb-2">
-                <AlertCircle className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />
-                Il file <strong>{importPreview.fileName}</strong> risale al {formatDateTime(importPreview.data.exportedAt)}, mentre i dati già presenti su questo dispositivo sono più recenti (ultimo salvataggio: {formatDateTime(lastSavedAt?.toISOString())}). Importarlo sovrascriverà i dati più recenti con quelli del backup più vecchio.
-              </p>
-              <div className="flex gap-2">
-                <Button variant="secondary" className="px-2.5 py-1 text-xs" onClick={() => setImportPreview(null)}>Annulla</Button>
-                <Button
-                  variant="danger"
-                  className="px-2.5 py-1 text-xs"
-                  onClick={() => {
-                    applyImportedData(importPreview.data);
-                    setImportPreview(null);
-                  }}
-                >
-                  Importa comunque
-                </Button>
+          <div className="space-y-4">
+            <div>
+              <p className="text-xs font-semibold text-slate-400 mb-1.5">Modulo Corrente</p>
+              <Button variant="secondary" className="justify-start w-full" onClick={handleExportCurrentFormationPdf}>
+                <LayoutGrid className="w-4 h-4" /> Esporta Modulo Corrente
+              </Button>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold text-slate-400 mb-1.5">Focus Tecnico</p>
+              <div className="flex flex-wrap gap-2">
+                <select value={pdfFocusId} onChange={(e) => setPdfFocusId(e.target.value)} className={inputClass + " flex-1 min-w-[10rem]"}>
+                  <option value="">Scegli un Focus...</option>
+                  {(activeSeason?.focusTecnici || []).map((ft) => (
+                    <option key={ft.id} value={ft.id}>{ft.title || "Senza titolo"}</option>
+                  ))}
+                </select>
+                <Button variant="secondary" onClick={handleExportFocusPdf}><Target className="w-4 h-4" /> Esporta</Button>
               </div>
             </div>
-          )}
+
+            <div>
+              <p className="text-xs font-semibold text-slate-400 mb-1.5">Esercizio</p>
+              <div className="grid grid-cols-2 gap-2 mb-2">
+                <select value={pdfExType} onChange={(e) => { setPdfExType(e.target.value); setPdfExerciseId(""); }} className={inputClass}>
+                  <option value="">Tutte le tipologie</option>
+                  {allExerciseTypes.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+                <select value={pdfExCategory} onChange={(e) => { setPdfExCategory(e.target.value); setPdfExerciseId(""); }} className={inputClass}>
+                  <option value="Tutte">Tutte le categorie</option>
+                  <option value="ND">Nessuna categoria</option>
+                  {allExerciseCategories.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <select value={pdfExerciseId} onChange={(e) => setPdfExerciseId(e.target.value)} className={inputClass + " flex-1 min-w-[10rem]"}>
+                  <option value="">Scegli un esercizio...</option>
+                  {filteredExercisesForPdf.map((ex) => (
+                    <option key={ex.id} value={ex.id}>{ex.title || "Senza titolo"}</option>
+                  ))}
+                </select>
+                <Button variant="secondary" onClick={handleExportExercisePdf}><Target className="w-4 h-4" /> Esporta</Button>
+              </div>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold text-slate-400 mb-1.5">Esercizi per Tipologia</p>
+              <div className="flex flex-wrap gap-2">
+                <select value={pdfCategoryType} onChange={(e) => setPdfCategoryType(e.target.value)} className={inputClass + " flex-1 min-w-[10rem]"}>
+                  <option value="">Scegli una tipologia...</option>
+                  {allExerciseTypes.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+                <Button variant="secondary" onClick={handleExportExercisesByTypePdf}><LayoutGrid className="w-4 h-4" /> Esporta</Button>
+              </div>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold text-slate-400 mb-1.5">PlayBook completo</p>
+              <Button variant="secondary" className="justify-start w-full" onClick={handleExportPlaybookPdf}>
+                <FileSpreadsheet className="w-4 h-4" /> Esporta Playbook
+              </Button>
+            </div>
+          </div>
         </Card>
 
         <Card className="p-5">
@@ -9310,6 +9446,28 @@ function buildPitchHTML(formation, assignments, players) {
     })
     .join("");
   return `<div class="pitch">${markers}</div>`;
+}
+
+// Scarica la scheda stampabile del modulo in campo (schieramento, panchina,
+// punti di forza/debolezza). Condivisa tra la sezione Moduli e l'esportazione
+// PDF del modulo corrente da Esporta Dati.
+function downloadFormationSheet(formation, lineup, players, teamName) {
+  if (!formation) return;
+  let body = `<h1>${teamName || ""}</h1>`;
+  body += `<h2>${formation.name} — ${formation.subtitle}</h2>`;
+  body += `<p>${formation.structureLabel}</p>`;
+  body += buildPitchHTML(formation, lineup?.assignments || {}, players);
+  if ((lineup?.bench || []).length > 0) {
+    body += `<h2>Panchina</h2><ul>${(lineup.bench || [])
+      .map((id) => {
+        const p = players.find((pl) => pl.id === id);
+        return p ? `<li>${p.name} — ${p.role}</li>` : "";
+      })
+      .join("")}</ul>`;
+  }
+  body += `<h2>Punti di forza</h2><ul>${formation.strengths.map((s) => `<li>${s}</li>`).join("")}</ul>`;
+  body += `<h2>Punti di debolezza</h2><ul>${formation.weaknesses.map((s) => `<li>${s}</li>`).join("")}</ul>`;
+  downloadPrintableHTML(`modulo-${formation.name}.html`, "Modulo in campo", body);
 }
 
 // ============================================================
