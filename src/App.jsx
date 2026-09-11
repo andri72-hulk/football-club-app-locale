@@ -3093,7 +3093,9 @@ const CALENDAR_EVENT_STYLES = {
   custom: { dot: "bg-rose-300", pill: "bg-rose-400/20 text-rose-200", label: "Altro" },
 };
 
-function trainingCalendarLabel(t) {
+function trainingCalendarLabel(t, focusTecnici) {
+  const linkedFocus = (focusTecnici || []).find((f) => f.id === t.focusTecnicoId);
+  if (linkedFocus?.title) return linkedFocus.title;
   return t.focus && t.focus.trim() ? t.focus : "Allenamento";
 }
 
@@ -3101,6 +3103,7 @@ function CalendarSection({ season, updateSeason, onGoTo }) {
   const trainings = season?.trainings || [];
   const matches = season?.matches || [];
   const customEvents = season?.customEvents || [];
+  const focusTecnici = season?.focusTecnici || [];
   const [cursor, setCursor] = useState(() => new Date());
   const [selectedDay, setSelectedDay] = useState(null);
   const [showAddEvent, setShowAddEvent] = useState(false);
@@ -3125,7 +3128,7 @@ function CalendarSection({ season, updateSeason, onGoTo }) {
         data: t,
         date: d,
         time: t.time || "",
-        label: trainingCalendarLabel(t),
+        label: trainingCalendarLabel(t, focusTecnici),
       });
     });
     matches.forEach((m) => {
@@ -3148,7 +3151,7 @@ function CalendarSection({ season, updateSeason, onGoTo }) {
     });
     Object.values(map).forEach((list) => list.sort((a, b) => (a.time || "").localeCompare(b.time || "")));
     return map;
-  }, [trainings, matches, customEvents]);
+  }, [trainings, matches, customEvents, focusTecnici]);
 
   const cells = [];
   for (let i = 0; i < startWeekday; i++) cells.push(null);
