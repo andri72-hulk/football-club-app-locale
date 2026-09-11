@@ -2542,7 +2542,7 @@ export default function FootballClubApp() {
             }}
           />
         ) : tab === "calendar" ? (
-          <CalendarSection season={activeSeason} onGoTo={setTab} />
+          <CalendarSection season={activeSeason} updateSeason={updateActiveSeason} onGoTo={setTab} />
         ) : tab === "players" ? (
           <PlayersSection
             season={activeSeason}
@@ -3084,11 +3084,28 @@ function sameDay(a, b) {
 // Vista calendario mensile: allenamenti e partite del mese, con un puntino
 // colorato per giorno. Vista di sola consultazione — per aprire il dettaglio
 // di un evento si passa comunque dalle sezioni Allenamenti/Partite.
-function CalendarSection({ season, onGoTo }) {
+// Stile visivo per tipo di evento nel calendario: colore puntino, sfondo
+// pastello della riga in cella, e colore testo — stesso codice colore
+// ovunque (cella compatta, elenco dettaglio, legenda).
+const CALENDAR_EVENT_STYLES = {
+  training: { dot: "bg-emerald-400", pill: "bg-emerald-500/20 text-emerald-200", label: "Allenamento" },
+  match: { dot: "bg-sky-400", pill: "bg-sky-500/20 text-sky-200", label: "Partita" },
+  custom: { dot: "bg-rose-300", pill: "bg-rose-400/20 text-rose-200", label: "Altro" },
+};
+
+function trainingCalendarLabel(t) {
+  return t.focus && t.focus.trim() ? t.focus : "Allenamento";
+}
+
+function CalendarSection({ season, updateSeason, onGoTo }) {
   const trainings = season?.trainings || [];
   const matches = season?.matches || [];
+  const customEvents = season?.customEvents || [];
   const [cursor, setCursor] = useState(() => new Date());
   const [selectedDay, setSelectedDay] = useState(null);
+  const [showAddEvent, setShowAddEvent] = useState(false);
+  const [newEventTitle, setNewEventTitle] = useState("");
+  const [newEventTime, setNewEventTime] = useState("18:00");
 
   const year = cursor.getFullYear();
   const month = cursor.getMonth();
@@ -3103,23 +3120,56 @@ function CalendarSection({ season, onGoTo }) {
       const d = new Date(t.date);
       if (isNaN(d.getTime())) return;
       const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-      (map[key] = map[key] || []).push({ type: "training", data: t, date: d });
+      (map[key] = map[key] || []).push({
+        type: "training",
+        data: t,
+        date: d,
+        time: t.time || "",
+        label: trainingCalendarLabel(t),
+      });
     });
     matches.forEach((m) => {
       const d = new Date(m.date);
       if (isNaN(d.getTime())) return;
       const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-      (map[key] = map[key] || []).push({ type: "match", data: m, date: d });
+      (map[key] = map[key] || []).push({
+        type: "match",
+        data: m,
+        date: d,
+        time: m.time || "",
+        label: `vs ${m.opponent || "?"} (${m.homeAway || "Casa"})`,
+      });
     });
+    customEvents.forEach((ev) => {
+      const d = new Date(ev.date);
+      if (isNaN(d.getTime())) return;
+      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      (map[key] = map[key] || []).push({ type: "custom", data: ev, date: d, time: ev.time || "", label: ev.title });
+    });
+    Object.values(map).forEach((list) => list.sort((a, b) => (a.time || "").localeCompare(b.time || "")));
     return map;
-  }, [trainings, matches]);
+  }, [trainings, matches, customEvents]);
 
   const cells = [];
   for (let i = 0; i < startWeekday; i++) cells.push(null);
   for (let day = 1; day <= daysInMonth; day++) cells.push(day);
 
   const today = new Date();
-  const selectedEvents = selectedDay ? eventsByDay[`${selectedDay.getFullYear()}-${selectedDay.getMonth()}-${selectedDay.getDate()}`] || [] : [];
+  const selectedKey = selectedDay ? `${selectedDay.getFullYear()}-${selectedDay.getMonth()}-${selectedDay.getDate()}` : null;
+  const selectedEvents = selectedKey ? eventsByDay[selectedKey] || [] : [];
+
+  function addCustomEvent() {
+    if (!newEventTitle.trim() || !selectedDay || !updateSeason) return;
+    const ev = { id: uid("cev"), date: selectedDay.toISOString(), time: newEventTime, title: newEventTitle.trim() };
+    updateSeason((s) => ({ customEvents: [...(s.customEvents || []), ev] }));
+    setNewEventTitle("");
+    setShowAddEvent(false);
+  }
+
+  function deleteCustomEvent(id) {
+    if (!updateSeason) return;
+    updateSeason((s) => ({ customEvents: (s.customEvents || []).filter((e) => e.id !== id) }));
+  }
 
   return (
     <div>
@@ -3154,56 +3204,107 @@ function CalendarSection({ season, onGoTo }) {
           const key = `${year}-${month}-${day}`;
           const events = eventsByDay[key] || [];
           const isToday = sameDay(d, today);
+          const visibleEvents = events.slice(0, 2);
+          const extraCount = events.length - visibleEvents.length;
           return (
             <button
               key={key}
               onClick={() => setSelectedDay(d)}
-              className={`h-12 sm:h-14 rounded-lg border p-1 flex flex-col items-center sm:items-start gap-0.5 text-left transition-colors ${
+              className={`min-h-[4.5rem] sm:min-h-[5.5rem] rounded-lg border p-1 flex flex-col items-stretch gap-0.5 text-left transition-colors overflow-hidden ${
                 isToday ? "border-emerald-500/50 bg-emerald-500/10" : "border-white/10 hover:bg-white/5"
               }`}
             >
-              <span className={`text-[11px] font-semibold ${isToday ? "text-emerald-400" : "text-slate-300"}`}>{day}</span>
-              <div className="flex flex-wrap gap-0.5 justify-center sm:justify-start">
-                {events.some((e) => e.type === "training") && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />}
-                {events.some((e) => e.type === "match") && <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />}
+              <span className={`text-[11px] font-semibold px-0.5 ${isToday ? "text-emerald-400" : "text-slate-300"}`}>{day}</span>
+              <div className="flex flex-col gap-0.5 min-w-0">
+                {visibleEvents.map((e, idx) => {
+                  const style = CALENDAR_EVENT_STYLES[e.type];
+                  return (
+                    <span
+                      key={idx}
+                      className={`rounded px-1 py-0.5 text-[9px] sm:text-[10px] font-medium truncate ${style.pill}`}
+                      title={`${e.time ? e.time + " - " : ""}${e.label}`}
+                    >
+                      {e.time ? `${e.time} ` : ""}{e.label}
+                    </span>
+                  );
+                })}
+                {extraCount > 0 && <span className="text-[9px] text-slate-500 px-1">+{extraCount} altro/i</span>}
               </div>
             </button>
           );
         })}
       </div>
 
-      <div className="flex items-center gap-4 mt-4 text-[11px] text-slate-500">
+      <div className="flex items-center gap-4 mt-4 text-[11px] text-slate-500 flex-wrap">
         <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-400" /> Allenamento</span>
         <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-sky-400" /> Partita</span>
+        <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-rose-300" /> Altro</span>
       </div>
 
-      <Modal open={!!selectedDay} onClose={() => setSelectedDay(null)} title={selectedDay ? formatDate(selectedDay.toISOString()) : ""}>
-        {selectedEvents.length === 0 ? (
+      <Modal
+        open={!!selectedDay}
+        onClose={() => {
+          setSelectedDay(null);
+          setShowAddEvent(false);
+        }}
+        title={selectedDay ? formatDate(selectedDay.toISOString()) : ""}
+      >
+        {selectedEvents.length === 0 && !showAddEvent && (
           <EmptyState icon={Calendar} text="Nessun evento in questo giorno." />
-        ) : (
-          <div className="space-y-2">
-            {selectedEvents.map((e, i) => (
-              <Card key={i} className="p-3">
-                {e.type === "training" ? (
+        )}
+        {selectedEvents.length > 0 && (
+          <div className="space-y-2 mb-3">
+            {selectedEvents.map((e, i) => {
+              const style = CALENDAR_EVENT_STYLES[e.type];
+              const TypeIcon = e.type === "match" ? MATCH_TYPE_ICONS[e.data.matchType] || Trophy : null;
+              return (
+                <Card key={i} className="p-3">
                   <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-semibold text-emerald-400">Allenamento</p>
-                      <p className="text-xs text-slate-400">{e.data.time || "--"} · {e.data.focus || "Nessun focus indicato"}</p>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`w-2 h-2 rounded-full shrink-0 ${style.dot}`} />
+                        {TypeIcon && <TypeIcon className="w-3.5 h-3.5 text-sky-300 shrink-0" />}
+                        <p className={`text-sm font-semibold truncate ${e.type === "training" ? "text-emerald-400" : e.type === "match" ? "text-sky-400" : "text-rose-300"}`}>
+                          {e.label}
+                        </p>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-0.5">{e.time || "--"}</p>
                     </div>
-                    <Button variant="secondary" className="px-2.5 py-1 text-xs" onClick={() => onGoTo("trainings")}>Vai</Button>
+                    {e.type === "custom" ? (
+                      <button onClick={() => deleteCustomEvent(e.data.id)} className="rounded-lg p-1.5 hover:bg-rose-500/10 text-rose-400 shrink-0" title="Elimina evento">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    ) : (
+                      <Button variant="secondary" className="px-2.5 py-1 text-xs shrink-0" onClick={() => onGoTo(e.type === "training" ? "trainings" : "matches")}>
+                        Vai
+                      </Button>
+                    )}
                   </div>
-                ) : (
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-semibold text-sky-400">vs {e.data.opponent}</p>
-                      <p className="text-xs text-slate-400">{e.data.time || "--"} · {e.data.venue || ""}</p>
-                    </div>
-                    <Button variant="secondary" className="px-2.5 py-1 text-xs" onClick={() => onGoTo("matches")}>Vai</Button>
-                  </div>
-                )}
-              </Card>
-            ))}
+                </Card>
+              );
+            })}
           </div>
+        )}
+
+        {showAddEvent ? (
+          <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-3 space-y-2">
+            <input
+              className={inputClass}
+              value={newEventTitle}
+              onChange={(e) => setNewEventTitle(e.target.value)}
+              placeholder="Es. Riunione con staff, colloquio genitori..."
+              autoFocus
+            />
+            <input type="time" className={inputClass} value={newEventTime} onChange={(e) => setNewEventTime(e.target.value)} />
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" className="px-2.5 py-1 text-xs" onClick={() => setShowAddEvent(false)}>Annulla</Button>
+              <Button className="px-2.5 py-1 text-xs" disabled={!newEventTitle.trim()} onClick={addCustomEvent}>Salva evento</Button>
+            </div>
+          </div>
+        ) : (
+          <Button variant="secondary" onClick={() => setShowAddEvent(true)}>
+            <Plus className="w-4 h-4" /> Aggiungi evento (riunione, altro...)
+          </Button>
         )}
       </Modal>
     </div>
