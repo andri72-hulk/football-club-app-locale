@@ -1341,6 +1341,47 @@ function clampStat(value) {
   return Math.min(STAT_MAX, Math.max(STAT_MIN, n));
 }
 
+// Media di tutti i voti numerici di un giocatore (Caratteristiche base +
+// Statistiche Mentali + Tecnico/Tattiche, oppure Statistiche Portiere per i
+// portieri). "Valutazione Mister" non è inclusa: sono note testuali libere,
+// non voti numerici.
+function playerOverallRating(player) {
+  if (!player) return null;
+  const isGoalkeeper = player.role === "Portiere";
+  const baseStats = player.baseStats || emptyBaseStats();
+  const mentalStats = player.mentalStats || emptyMentalStats();
+  const thirdStats = isGoalkeeper ? player.gkStats || emptyGkStats() : player.techTacticStats || emptyTechTacticStats();
+  const thirdKeys = isGoalkeeper ? GK_STAT_KEYS : TECH_TACTIC_STAT_KEYS;
+  const values = [
+    ...BASE_STAT_KEYS.map((s) => clampStat(baseStats[s.key])),
+    ...MENTAL_STAT_KEYS.map((s) => clampStat(mentalStats[s.key])),
+    ...thirdKeys.map((s) => clampStat(thirdStats[s.key])),
+  ];
+  if (values.length === 0) return null;
+  return values.reduce((sum, v) => sum + v, 0) / values.length;
+}
+
+// Badge colorato con la media di tutti i voti di un giocatore: verde se alta,
+// ambra se media, rosso se bassa. Non mostra nulla se non ci sono voti.
+function PlayerRatingBadge({ rating, className = "", title }) {
+  if (rating == null) return null;
+  const value = Math.round(rating * 10) / 10;
+  const colorClass =
+    value >= 7
+      ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+      : value >= 5
+      ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
+      : "bg-rose-500/20 text-rose-300 border-rose-500/40";
+  return (
+    <span
+      title={title}
+      className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-[11px] font-bold shrink-0 ${colorClass} ${className}`}
+    >
+      {value.toFixed(1)}
+    </span>
+  );
+}
+
 function emptyBaseStats() {
   const o = {};
   BASE_STAT_KEYS.forEach((s) => (o[s.key] = 5));
@@ -1632,16 +1673,16 @@ function Slider({ value, onChange, label }) {
     return Math.min(STAT_MAX, Math.max(STAT_MIN, v));
   }
   return (
-    <div className="mb-3">
-      <div className="flex items-center justify-between mb-1 gap-2">
-        <span className="text-xs font-medium text-slate-300">{label}</span>
+    <div className="mb-3 min-w-0">
+      <div className="flex items-start justify-between mb-1 gap-2 min-w-0">
+        <span className="text-xs font-medium text-slate-300 leading-snug break-words min-w-0">{label}</span>
         <input
           type="number"
           min={STAT_MIN}
           max={STAT_MAX}
           value={value}
           onChange={(e) => onChange(clamp(Number(e.target.value)))}
-          className="w-14 rounded-lg border border-white/10 bg-slate-950/60 px-1.5 py-1 text-center text-xs font-bold text-emerald-400 outline-none focus:border-emerald-500/60"
+          className="w-14 shrink-0 rounded-lg border border-white/10 bg-slate-950/60 px-1.5 py-1 text-center text-xs font-bold text-emerald-400 outline-none focus:border-emerald-500/60"
         />
       </div>
       <input
@@ -3452,7 +3493,12 @@ function PlayersSection({ season, updateSeason, showToast, view, setView, jumpTo
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "16px" }}>
           {filtered.map((p) => (
-            <Card key={p.id} className="p-3 sm:p-4 hover:border-emerald-500/40 transition-colors h-full flex flex-col items-center text-center">
+            <Card key={p.id} className="p-3 sm:p-4 hover:border-emerald-500/40 transition-colors h-full flex flex-col items-center text-center relative">
+              <PlayerRatingBadge
+                rating={playerOverallRating(p)}
+                className="absolute top-2 right-2"
+                title={`Media di tutti i voti di ${p.name}`}
+              />
               <button onClick={() => setSelectedPlayer(p)} className="flex flex-col items-center">
                 <div className="relative mb-2 sm:mb-3">
                   <img src={playerAvatar(p)} alt={p.name} className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-slate-800 border-2 border-white/10 object-cover" />
@@ -3503,7 +3549,7 @@ function PlayersSection({ season, updateSeason, showToast, view, setView, jumpTo
         <PlayerForm onSubmit={addPlayer} onCancel={() => setShowAdd(false)} />
       </Modal>
 
-      <Modal open={!!selectedPlayer} onClose={() => setSelectedPlayer(null)} title={selectedPlayer?.name || ""} wide>
+      <Modal open={!!selectedPlayer} onClose={() => setSelectedPlayer(null)} title={selectedPlayer?.name || ""} size="xl">
         {selectedPlayer && (
           <PlayerDetail
             player={players.find((p) => p.id === selectedPlayer.id) || selectedPlayer}
@@ -3961,6 +4007,7 @@ function PlayerDetail({ player, onUpdate, onDelete, onClose, trainings, matches 
             <Badge className={MEDICAL_COLORS[player.medicalStatus]}>
               <HeartPulse className="w-3 h-3" /> {player.medicalStatus}
             </Badge>
+            <PlayerRatingBadge rating={playerOverallRating(player)} title="Media di tutti i voti (Caratteristiche base, Mentali, Tecnico/Tattiche o Portiere)" />
           </div>
         </div>
         <div className="flex gap-1.5">
