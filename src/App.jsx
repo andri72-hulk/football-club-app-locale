@@ -1411,12 +1411,14 @@ function computePlayerStats(playerId, trainings, matches) {
   const m = matches || [];
   const presenze = t.filter((tr) => tr.attendance?.[playerId] === "Presente").length;
   const assenze = t.filter((tr) => tr.attendance?.[playerId] === "Assente").length;
+  const giustificati = t.filter((tr) => tr.attendance?.[playerId] === "Giustificato").length;
+  const infortuni = t.filter((tr) => tr.attendance?.[playerId] === "Infortunato").length;
   const convocazioni = m.filter((match) => (match.convocati || []).includes(playerId)).length;
   const reti = m.reduce((sum, match) => sum + (match.scorers || []).filter((s) => s.playerId === playerId).reduce((a, s) => a + (Number(s.goals) || 0), 0), 0);
   const assist = m.reduce((sum, match) => sum + (match.assists || []).filter((s) => s.playerId === playerId).reduce((a, s) => a + (Number(s.assists) || 0), 0), 0);
   const ammonizioni = m.filter((match) => (match.yellowCards || []).includes(playerId)).length;
   const espulsioni = m.filter((match) => (match.redCards || []).includes(playerId)).length;
-  return { presenze, assenze, convocazioni, reti, assist, ammonizioni, espulsioni };
+  return { presenze, assenze, giustificati, infortuni, convocazioni, reti, assist, ammonizioni, espulsioni };
 }
 
 function emptyCoachNotes() {
@@ -3639,13 +3641,24 @@ function PlayersBoard({ players, trainings, matches, onSelect }) {
           <tr className="bg-slate-900/80 text-left text-[11px] uppercase tracking-wide text-slate-500">
             <th className="px-3 py-2.5">#</th>
             <th className="px-3 py-2.5">Giocatore</th>
-            <th className="px-3 py-2.5 text-center bg-emerald-500/10 text-emerald-400">Presenze All.</th>
-            <th className="px-3 py-2.5 text-center bg-rose-500/10 text-rose-400">Assenze All.</th>
-            <th className="px-3 py-2.5 text-center">Convocazioni</th>
-            <th className="px-3 py-2.5 text-center">Reti</th>
-            <th className="px-3 py-2.5 text-center">Assist</th>
-            <th className="px-3 py-2.5 text-center">Amm.</th>
-            <th className="px-3 py-2.5 text-center">Esp.</th>
+            <th className="px-2 py-2.5 text-center bg-emerald-500/10 text-emerald-400 leading-tight">
+              <span className="block">Presenze</span><span className="block">All.</span>
+            </th>
+            <th className="px-2 py-2.5 text-center bg-rose-500/10 text-rose-400 leading-tight">
+              <span className="block">Assenze</span><span className="block">All.</span>
+            </th>
+            <th className="px-2 py-2.5 text-center bg-amber-500/10 text-amber-400 leading-tight">
+              <span className="block">Assente</span><span className="block">Giust.</span>
+            </th>
+            <th className="px-2 py-2.5 text-center bg-rose-500/10 text-rose-400 leading-tight">
+              <span className="flex items-center justify-center gap-1"><HeartPulse className="w-3 h-3" /> Infort.</span>
+              <span className="block">Allen.</span>
+            </th>
+            <th className="px-2 py-2.5 text-center leading-tight"><span className="block">Convo-</span><span className="block">cazioni</span></th>
+            <th className="px-2 py-2.5 text-center">Reti</th>
+            <th className="px-2 py-2.5 text-center">Assist</th>
+            <th className="px-2 py-2.5 text-center leading-tight"><span className="block">Amm.</span></th>
+            <th className="px-2 py-2.5 text-center leading-tight"><span className="block">Esp.</span></th>
           </tr>
         </thead>
         <tbody>
@@ -3663,13 +3676,15 @@ function PlayersBoard({ players, trainings, matches, onSelect }) {
                     </div>
                   </div>
                 </td>
-                <td className="px-3 py-2.5 text-center bg-emerald-500/10 text-emerald-400 font-bold">{s.presenze}</td>
-                <td className="px-3 py-2.5 text-center bg-rose-500/10 text-rose-400 font-bold">{s.assenze}</td>
-                <td className="px-3 py-2.5 text-center text-sky-400">{s.convocazioni}</td>
-                <td className="px-3 py-2.5 text-center text-slate-200 font-semibold">{s.reti}</td>
-                <td className="px-3 py-2.5 text-center text-slate-200 font-semibold">{s.assist}</td>
-                <td className="px-3 py-2.5 text-center text-amber-400">{s.ammonizioni}</td>
-                <td className="px-3 py-2.5 text-center text-rose-500">{s.espulsioni}</td>
+                <td className="px-2 py-2.5 text-center bg-emerald-500/10 text-emerald-400 font-bold">{s.presenze}</td>
+                <td className="px-2 py-2.5 text-center bg-rose-500/10 text-rose-400 font-bold">{s.assenze}</td>
+                <td className="px-2 py-2.5 text-center bg-amber-500/10 text-amber-400 font-bold">{s.giustificati}</td>
+                <td className="px-2 py-2.5 text-center bg-rose-500/10 text-rose-400 font-bold">{s.infortuni}</td>
+                <td className="px-2 py-2.5 text-center text-sky-400">{s.convocazioni}</td>
+                <td className="px-2 py-2.5 text-center text-slate-200 font-semibold">{s.reti}</td>
+                <td className="px-2 py-2.5 text-center text-slate-200 font-semibold">{s.assist}</td>
+                <td className="px-2 py-2.5 text-center text-amber-400">{s.ammonizioni}</td>
+                <td className="px-2 py-2.5 text-center text-rose-500">{s.espulsioni}</td>
               </tr>
             );
           })}
