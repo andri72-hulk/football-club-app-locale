@@ -4,7 +4,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend
 } from "recharts";
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import {
   isFileSyncSupported, loadSyncHandle, createSyncFile, linkExistingSyncFile,
   clearSyncHandle, verifySyncPermission, readSyncFile, writeSyncFile,
@@ -8811,122 +8811,213 @@ function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, l
     e.target.value = "";
   }
 
-  function exportPlayersExcel() {
+  async function exportPlayersExcel() {
     const players = activeSeason?.players || [];
     if (players.length === 0) return showToast("Nessun giocatore da esportare", "error");
 
-    const anagraficaHeaders = ["Numero", "Nome", "Ruolo principale", "Ruolo alternativo", "Posizione", "Piede preferito", "Altezza (cm)", "Stato medico", "Data di nascita", "Note"];
+    const anagraficaHeaders = [
+      "Numero", "Nome", "Ruolo principale", "Ruolo alternativo", "Posizione", "Piede preferito",
+      "Altezza (cm)", "Stato medico", "Media Voti", "Data di nascita", "Note",
+    ];
     const baseHeaders = BASE_STAT_KEYS.map((s) => s.label);
     const mentalHeaders = MENTAL_STAT_KEYS.map((s) => s.label);
     const techHeaders = TECH_TACTIC_STAT_KEYS.map((s) => s.label);
     const gkHeaders = GK_STAT_KEYS.map((s) => s.label);
-
     const headers = [...anagraficaHeaders, ...baseHeaders, ...mentalHeaders, ...techHeaders, ...gkHeaders];
-    const groups = [
+    const ncols = headers.length;
+
+    const sorted = players.slice().sort((a, b) => (a.number ?? 999) - (b.number ?? 999));
+    const rows = sorted.map((p) => {
+      const rating = playerOverallRating(p);
+      const anagrafica = [
+        p.number ?? "", p.name, p.role, p.role2 || "", p.position || "", p.preferredFoot || "",
+        p.height ?? "", p.medicalStatus, rating != null ? Math.round(rating * 10) / 10 : "",
+        p.birthDate || "", p.notes || "",
+      ];
+      const base = BASE_STAT_KEYS.map((s) => p.baseStats?.[s.key] ?? "");
+      const mental = MENTAL_STAT_KEYS.map((s) => p.mentalStats?.[s.key] ?? "");
+      const tech = TECH_TACTIC_STAT_KEYS.map((s) => p.techTacticStats?.[s.key] ?? "");
+      const gk = GK_STAT_KEYS.map((s) => (p.role === "Portiere" ? p.gkStats?.[s.key] ?? "" : ""));
+      return [...anagrafica, ...base, ...mental, ...tech, ...gk];
+    });
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Giocatori");
+    xlsStyleTitleRow(ws, 1, ncols, `SCHEDA GIOCATORI — ${activeSeason.teamName || ""}`);
+    xlsStyleSubtitleRow(
+      ws, 2, ncols,
+      `${activeSeason.leva ? activeSeason.leva + " · " : ""}${activeSeason.name}${activeSeason.teamFormat ? " · Calcio a " + activeSeason.teamFormat : ""}`
+    );
+    xlsStyleGroupRow(ws, 3, [
       { label: "DATI ANAGRAFICI", span: anagraficaHeaders.length },
       { label: "CARATTERISTICHE BASE", span: baseHeaders.length },
       { label: "STATISTICHE MENTALI", span: mentalHeaders.length },
       { label: "TECNICO/TATTICHE", span: techHeaders.length },
       { label: "PORTIERE", span: gkHeaders.length },
-    ];
+    ]);
+    xlsStyleHeaderRow(ws, 4, headers);
 
-    const rows = players
-      .slice()
-      .sort((a, b) => (a.number ?? 999) - (b.number ?? 999))
-      .map((p) => {
-        const anagrafica = [
-          p.number ?? "",
-          p.name,
-          p.role,
-          p.role2 || "",
-          p.position || "",
-          p.preferredFoot || "",
-          p.height ?? "",
-          p.medicalStatus,
-          p.birthDate || "",
-          p.notes || "",
-        ];
-        const base = BASE_STAT_KEYS.map((s) => p.baseStats?.[s.key] ?? "");
-        const mental = MENTAL_STAT_KEYS.map((s) => p.mentalStats?.[s.key] ?? "");
-        const tech = TECH_TACTIC_STAT_KEYS.map((s) => p.techTacticStats?.[s.key] ?? "");
-        const gk = GK_STAT_KEYS.map((s) => (p.role === "Portiere" ? p.gkStats?.[s.key] ?? "" : ""));
-        return [...anagrafica, ...base, ...mental, ...tech, ...gk];
-      });
+    const ratingColIndex = anagraficaHeaders.indexOf("Media Voti") + 1;
+    const statColsStart = anagraficaHeaders.length + 1;
+    const numberCols = new Set([1]);
+    for (let i = statColsStart; i <= ncols; i++) numberCols.add(i);
+    const lastRow = xlsWriteDataRows(ws, 5, rows, { numberCols, goldCols: new Set([ratingColIndex]) });
+    xlsFinalize(ws, 4);
+    xlsSetColWidths(ws, [
+      8, 20, 16, 16, 11, 12, 11, 13, 11, 13, 22,
+      ...baseHeaders.map(() => 10),
+      ...mentalHeaders.map(() => 12),
+      ...techHeaders.map(() => 16),
+      ...gkHeaders.map(() => 12),
+    ]);
 
-    const colWidths = [
-      { wch: 8 }, { wch: 20 }, { wch: 16 }, { wch: 16 }, { wch: 11 }, { wch: 12 }, { wch: 11 }, { wch: 13 }, { wch: 13 }, { wch: 22 },
-      ...baseHeaders.map(() => ({ wch: 10 })),
-      ...mentalHeaders.map(() => ({ wch: 12 })),
-      ...techHeaders.map(() => ({ wch: 14 })),
-      ...gkHeaders.map(() => ({ wch: 12 })),
-    ];
-
-    const ws = buildProfessionalSheet({
-      title: `SCHEDA GIOCATORI — ${activeSeason.teamName || ""}`,
-      subtitle: `${activeSeason.leva ? activeSeason.leva + " · " : ""}${activeSeason.name}${activeSeason.teamFormat ? " · Calcio a " + activeSeason.teamFormat : ""}`,
-      groups,
-      headers,
-      rows,
-      colWidths,
+    // --- Foglio 2: Valutazione Mister (note libere del mister, una colonna per Caratteristica Base) ---
+    const ws2 = wb.addWorksheet("Valutazione Mister");
+    const coachHeaders = ["Nome", ...baseHeaders];
+    xlsStyleTitleRow(ws2, 1, coachHeaders.length, `VALUTAZIONE MISTER — ${activeSeason.teamName || ""}`);
+    xlsStyleSubtitleRow(ws2, 2, coachHeaders.length, `${activeSeason.name} · Note libere per caratteristica`);
+    xlsStyleGroupRow(ws2, 3, [{ label: "GIOCATORE", span: coachHeaders.length }]);
+    xlsStyleHeaderRow(ws2, 4, coachHeaders, XLS_EMERALD_DARK);
+    const coachRows = sorted.map((p) => {
+      const notes = p.coachNotes || emptyCoachNotes();
+      return [p.name, ...BASE_STAT_KEYS.map((s) => notes[s.key] || "")];
     });
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Giocatori");
-    XLSX.writeFile(wb, `giocatori-${activeSeason.name}.xlsx`);
+    const lastRow2 = xlsWriteDataRows(ws2, 5, coachRows);
+    xlsFinalize(ws2, 4);
+    xlsSetColWidths(ws2, [20, ...baseHeaders.map(() => 30)]);
+    for (let r = 5; r <= lastRow2; r++) ws2.getRow(r).height = 34;
+
+    await downloadWorkbook(wb, `giocatori-${activeSeason.name}.xlsx`);
     showToast("Excel giocatori esportato");
   }
 
-  function exportTrainingsExcel() {
+  async function exportTrainingsExcel() {
     const trainings = activeSeason?.trainings || [];
+    const matches = activeSeason?.matches || [];
     const players = activeSeason?.players || [];
     const focusTecnici = activeSeason?.focusTecnici || [];
     if (trainings.length === 0) return showToast("Nessun allenamento da esportare", "error");
 
-    const detailHeaders = ["Data", "Ora", "Focus tecnico", "Durata totale (min)", "Giocatore", "Stato"];
+    const wb = new ExcelJS.Workbook();
+
+    // --- Foglio 1: Riepilogo ---
     const summaryHeaders = ["Data", "Ora", "Focus tecnico", "Presenti", "Assenti", "Giustificati", "Infortunati"];
-    const detailRows = [];
-    const summaryRows = [];
-    trainings.forEach((t) => {
+    const summaryRows = trainings.map((t) => {
       const linkedFocus = focusTecnici.find((f) => f.id === t.focusTecnicoId);
       const values = players.map((p) => t.attendance?.[p.id] || "Non registrato");
-      players.forEach((p) => {
-        detailRows.push([t.date, t.time, linkedFocus?.title || t.focus || "", linkedFocus ? totalFocusMinutes(linkedFocus) : "", p.name, t.attendance?.[p.id] || "Non registrato"]);
-      });
-      summaryRows.push([
-        t.date,
-        t.time,
-        linkedFocus?.title || t.focus || "",
+      return [
+        t.date, t.time, linkedFocus?.title || t.focus || "",
         values.filter((v) => v === "Presente").length,
         values.filter((v) => v === "Assente").length,
         values.filter((v) => v === "Giustificato").length,
         values.filter((v) => v === "Infortunato").length,
-      ]);
+      ];
     });
+    const ws1 = wb.addWorksheet("Riepilogo");
+    xlsStyleTitleRow(ws1, 1, summaryHeaders.length, `RIEPILOGO PRESENZE — ${activeSeason.teamName || ""}`);
+    xlsStyleSubtitleRow(ws1, 2, summaryHeaders.length, activeSeason.name);
+    xlsStyleGroupRow(ws1, 3, [{ label: "ALLENAMENTI", span: summaryHeaders.length }]);
+    xlsStyleHeaderRow(ws1, 4, summaryHeaders);
+    xlsWriteDataRows(ws1, 5, summaryRows, { numberCols: new Set([4, 5, 6, 7]) });
+    xlsFinalize(ws1, 4);
+    xlsSetColWidths(ws1, [12, 8, 24, 11, 11, 13, 13]);
 
-    const wsSummary = buildProfessionalSheet({
-      title: `RIEPILOGO PRESENZE — ${activeSeason.teamName || ""}`,
-      subtitle: activeSeason.name,
-      groups: [{ label: "ALLENAMENTI", span: summaryHeaders.length }],
-      headers: summaryHeaders,
-      rows: summaryRows,
-      colWidths: [{ wch: 12 }, { wch: 8 }, { wch: 28 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 12 }],
+    // --- Foglio 2: Dettaglio Presenze ---
+    const detailHeaders = ["Data", "Ora", "Focus tecnico", "Durata (min)", "Giocatore", "Stato"];
+    const detailRows = [];
+    trainings.forEach((t) => {
+      const linkedFocus = focusTecnici.find((f) => f.id === t.focusTecnicoId);
+      players.forEach((p) => {
+        detailRows.push([
+          t.date, t.time, linkedFocus?.title || t.focus || "",
+          linkedFocus ? totalFocusMinutes(linkedFocus) : "", p.name, t.attendance?.[p.id] || "Non registrato",
+        ]);
+      });
     });
-    const wsDetail = buildProfessionalSheet({
-      title: `DETTAGLIO PRESENZE — ${activeSeason.teamName || ""}`,
-      subtitle: activeSeason.name,
-      groups: [{ label: "PRESENZE PER GIOCATORE", span: detailHeaders.length }],
-      headers: detailHeaders,
-      rows: detailRows,
-      colWidths: [{ wch: 12 }, { wch: 8 }, { wch: 28 }, { wch: 16 }, { wch: 20 }, { wch: 14 }],
-    });
+    const ws2 = wb.addWorksheet("Presenze");
+    xlsStyleTitleRow(ws2, 1, detailHeaders.length, `DETTAGLIO PRESENZE — ${activeSeason.teamName || ""}`);
+    xlsStyleSubtitleRow(ws2, 2, detailHeaders.length, activeSeason.name);
+    xlsStyleGroupRow(ws2, 3, [{ label: "PRESENZE PER GIOCATORE", span: detailHeaders.length }]);
+    xlsStyleHeaderRow(ws2, 4, detailHeaders);
+    xlsWriteDataRows(ws2, 5, detailRows, { numberCols: new Set([4]) });
+    xlsFinalize(ws2, 4);
+    xlsSetColWidths(ws2, [12, 8, 24, 14, 22, 16]);
 
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, wsSummary, "Riepilogo");
-    XLSX.utils.book_append_sheet(wb, wsDetail, "Presenze");
-    XLSX.writeFile(wb, `presenze-${activeSeason.name}.xlsx`);
+    // --- Foglio 3: Presenze per Giocatore ---
+    // "Assenze" è il totale (assenze + giustificate + infortuni); il dettaglio
+    // delle tre componenti è in coda, dopo una colonna vuota di respiro.
+    const totalTrainings = trainings.length;
+    const headers3 = [
+      "Giocatore", "Allenamenti Disponibili", "Presenze", "Assenze", "% Presenza",
+      "", "Assenze", "Assenze Giustificate", "Infortuni",
+    ];
+    const rows3 = players.map((p) => {
+      const s = computePlayerStats(p.id, trainings, matches);
+      const assenzeTotali = s.assenze + s.giustificati + s.infortuni;
+      const presenze = s.presenze;
+      const pct = totalTrainings ? `${Math.round((presenze / totalTrainings) * 100)}%` : "-";
+      return [p.name, totalTrainings, presenze, assenzeTotali, pct, "", s.assenze, s.giustificati, s.infortuni];
+    });
+    const ws3 = wb.addWorksheet("Presenze per Giocatore");
+    xlsStyleTitleRow(ws3, 1, headers3.length, `PRESENZE PER GIOCATORE — ${activeSeason.teamName || ""}`);
+    xlsStyleSubtitleRow(ws3, 2, headers3.length, `${activeSeason.name} · Totale allenamenti stagione: ${totalTrainings}`);
+    xlsStyleGroupRow(ws3, 3, [
+      { label: "GIOCATORE", span: 5 },
+      { label: "", span: 1 },
+      { label: "DETTAGLIO ASSENZE", span: 3 },
+    ]);
+    xlsStyleHeaderRow(ws3, 4, headers3, XLS_EMERALD_DARK);
+    // la colonna vuota (spacer) resta bianca, senza bordi
+    ws3.getCell(3, 6).fill = null;
+    ws3.getCell(3, 6).border = {};
+    ws3.getCell(4, 6).fill = null;
+    ws3.getCell(4, 6).border = {};
+    const lastRow3 = xlsWriteDataRows(ws3, 5, rows3, { numberCols: new Set([2, 3, 4, 5, 7, 8, 9]) });
+    for (let r = 5; r <= lastRow3; r++) {
+      ws3.getCell(r, 6).fill = null;
+      ws3.getCell(r, 6).border = {};
+    }
+    xlsFinalize(ws3, 4);
+    xlsSetColWidths(ws3, [22, 20, 12, 12, 12, 3, 12, 20, 12]);
+
+    // --- Foglio 4: Convocazioni per Giocatore ---
+    const headers4 = [
+      "Giocatore", "Partite", "Convocazioni", "Partite", "Convocazioni", "Partite", "Convocazioni",
+      "Partite Totali", "Convocazioni Totali", "% Convocazioni",
+    ];
+    const rows4 = players.map((p) => {
+      const amichevoli = matches.filter((m) => m.matchType === "Amichevole");
+      const campionato = matches.filter((m) => m.matchType === "Campionato");
+      const torneo = matches.filter((m) => m.matchType === "Torneo");
+      const convOf = (list) => list.filter((m) => (m.convocati || []).includes(p.id)).length;
+      const amTot = amichevoli.length, amConv = convOf(amichevoli);
+      const campTot = campionato.length, campConv = convOf(campionato);
+      const torTot = torneo.length, torConv = convOf(torneo);
+      const totPartite = amTot + campTot + torTot;
+      const totConv = amConv + campConv + torConv;
+      const pctConv = totPartite ? `${Math.round((totConv / totPartite) * 100)}%` : "-";
+      return [p.name, amTot, amConv, campTot, campConv, torTot, torConv, totPartite, totConv, pctConv];
+    });
+    const ws4 = wb.addWorksheet("Convocazioni per Giocatore");
+    xlsStyleTitleRow(ws4, 1, headers4.length, `CONVOCAZIONI PER GIOCATORE — ${activeSeason.teamName || ""}`);
+    xlsStyleSubtitleRow(ws4, 2, headers4.length, activeSeason.name);
+    xlsStyleGroupRow(ws4, 3, [
+      { label: "GIOCATORE", span: 1 },
+      { label: "AMICHEVOLE", span: 2 },
+      { label: "CAMPIONATO", span: 2 },
+      { label: "TORNEO", span: 2 },
+      { label: "TOTALE", span: 3 },
+    ]);
+    xlsStyleHeaderRow(ws4, 4, headers4, XLS_EMERALD_DARK);
+    xlsWriteDataRows(ws4, 5, rows4, { numberCols: new Set(range(2, headers4.length)) });
+    xlsFinalize(ws4, 4);
+    xlsSetColWidths(ws4, [20, 10, 14, 10, 14, 10, 14, 14, 18, 14]);
+
+    await downloadWorkbook(wb, `presenze-${activeSeason.name}.xlsx`);
     showToast("Excel presenze esportato");
   }
 
-  function exportMatchesExcel() {
+  async function exportMatchesExcel() {
     const matches = activeSeason?.matches || [];
     const players = activeSeason?.players || [];
     if (matches.length === 0) return showToast("Nessuna partita da esportare", "error");
@@ -8937,18 +9028,9 @@ function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, l
       "Marcatori", "Assistman", "Ammoniti", "Espulsi", "Convocati", "Annotazioni mister",
     ];
     const rows = matches.map((m) => [
-      m.date,
-      m.time,
-      m.matchType || "",
-      m.matchType === "Torneo" ? m.tournamentName || "" : "",
-      m.opponent,
-      m.opponentColorPrimary || "",
-      m.opponentColorSecondary || "",
-      m.homeAway,
-      m.venue || "",
-      m.status,
-      m.result?.golFor ?? "",
-      m.result?.golAgainst ?? "",
+      m.date, m.time, m.matchType || "", m.matchType === "Torneo" ? m.tournamentName || "" : "",
+      m.opponent, m.opponentColorPrimary || "", m.opponentColorSecondary || "",
+      m.homeAway, m.venue || "", m.status, m.result?.golFor ?? "", m.result?.golAgainst ?? "",
       (m.scorers || []).map((s) => `${players.find((p) => p.id === s.playerId)?.name || "?"} (${s.goals})`).join(", "),
       (m.assists || []).map((s) => `${players.find((p) => p.id === s.playerId)?.name || "?"} (${s.assists})`).join(", "),
       (m.yellowCards || []).map((id) => players.find((p) => p.id === id)?.name || "?").join(", "),
@@ -8957,59 +9039,187 @@ function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, l
       m.coachNotes || "",
     ]);
 
-    const ws = buildProfessionalSheet({
-      title: `RIEPILOGO PARTITE — ${activeSeason.teamName || ""}`,
-      subtitle: activeSeason.name,
-      groups: [
-        { label: "DATI PARTITA", span: 10 },
-        { label: "RISULTATO", span: 2 },
-        { label: "TABELLINO", span: 6 },
-      ],
-      headers,
-      rows,
-      colWidths: [
-        { wch: 12 }, { wch: 8 }, { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 14 }, { wch: 14 },
-        { wch: 12 }, { wch: 16 }, { wch: 12 }, { wch: 9 }, { wch: 9 },
-        { wch: 30 }, { wch: 30 }, { wch: 20 }, { wch: 20 }, { wch: 30 }, { wch: 30 },
-      ],
+    const tipoCol = 3;
+    const tipoColors = {};
+    matches.forEach((m, i) => {
+      tipoColors[i] = XLS_MATCH_TYPE_COLOR[m.matchType] || XLS_TEXT_DARK;
     });
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Partite");
-    XLSX.writeFile(wb, `partite-${activeSeason.name}.xlsx`);
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Partite");
+    xlsStyleTitleRow(ws, 1, headers.length, `RIEPILOGO PARTITE — ${activeSeason.teamName || ""}`);
+    xlsStyleSubtitleRow(ws, 2, headers.length, activeSeason.name);
+    xlsStyleGroupRow(ws, 3, [
+      { label: "DATI PARTITA", span: 10 },
+      { label: "RISULTATO", span: 2 },
+      { label: "TABELLINO", span: 6 },
+    ]);
+    xlsStyleHeaderRow(ws, 4, headers);
+    xlsWriteDataRows(ws, 5, rows, { numberCols: new Set([11, 12]), textColors: { [tipoCol]: tipoColors } });
+    xlsFinalize(ws, 4);
+    xlsSetColWidths(ws, [12, 8, 12, 18, 18, 14, 14, 12, 16, 12, 9, 9, 30, 30, 20, 20, 30, 30]);
+
+    await downloadWorkbook(wb, `partite-${activeSeason.name}.xlsx`);
     showToast("Excel partite esportato");
   }
 
-  function exportStatisticsExcel() {
+  async function exportStatisticsExcel() {
     const players = activeSeason?.players || [];
     const trainings = activeSeason?.trainings || [];
     const matches = activeSeason?.matches || [];
     if (players.length === 0) return showToast("Nessun giocatore da esportare", "error");
 
-    const headers = ["Numero", "Nome", "Ruolo", "Presenze allenamento", "Assenze allenamento", "Convocazioni partita", "Reti", "Assist", "Ammonizioni", "Espulsioni"];
+    const giocatoreH = ["Numero", "Nome", "Ruolo"];
+    const allenamentiH = ["Allenamenti", "Presenze All.", "Assenze All.", "Assente Giust.", "Infortunato", "Assenze Tot.", "% Presenza"];
+    const partiteH = ["Partite", "Convocazioni", "Reti", "Assist", "Amm.", "Esp.", "% Convocazioni", "Media Reti", "Media Assist"];
+    const headers = [...giocatoreH, ...allenamentiH, ...partiteH];
+    const totAllenamenti = trainings.length;
+    const totPartite = matches.length;
+
     const rows = players
       .slice()
       .sort((a, b) => (a.number ?? 999) - (b.number ?? 999))
       .map((p) => {
         const s = computePlayerStats(p.id, trainings, matches);
-        return [p.number ?? "", p.name, p.role, s.presenze, s.assenze, s.convocazioni, s.reti, s.assist, s.ammonizioni, s.espulsioni];
+        const assenzeTot = s.assenze + s.giustificati + s.infortuni;
+        const pctPresenza = totAllenamenti ? `${Math.round((s.presenze / totAllenamenti) * 100)}%` : "-";
+        const pctConv = totPartite ? `${Math.round((s.convocazioni / totPartite) * 100)}%` : "-";
+        const mediaReti = s.convocazioni ? Math.round((s.reti / s.convocazioni) * 100) / 100 : 0;
+        const mediaAssist = s.convocazioni ? Math.round((s.assist / s.convocazioni) * 100) / 100 : 0;
+        return [
+          p.number ?? "", p.name, p.role,
+          totAllenamenti, s.presenze, s.assenze, s.giustificati, s.infortuni, assenzeTot, pctPresenza,
+          totPartite, s.convocazioni, s.reti, s.assist, s.ammonizioni, s.espulsioni, pctConv, mediaReti, mediaAssist,
+        ];
       });
 
-    const ws = buildProfessionalSheet({
-      title: `STATISTICHE STAGIONE — ${activeSeason.teamName || ""}`,
-      subtitle: activeSeason.name,
-      groups: [
-        { label: "GIOCATORE", span: 3 },
-        { label: "ALLENAMENTI", span: 2 },
-        { label: "PARTITE", span: 5 },
-      ],
-      headers,
-      rows,
-      colWidths: [{ wch: 8 }, { wch: 20 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 8 }, { wch: 8 }, { wch: 12 }, { wch: 12 }],
-    });
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Statistiche");
-    XLSX.writeFile(wb, `statistiche-${activeSeason.name}.xlsx`);
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Statistiche");
+    xlsStyleTitleRow(ws, 1, headers.length, `STATISTICHE STAGIONE — ${activeSeason.teamName || ""}`);
+    xlsStyleSubtitleRow(ws, 2, headers.length, activeSeason.name);
+    xlsStyleGroupRow(ws, 3, [
+      { label: "GIOCATORE", span: giocatoreH.length },
+      { label: "ALLENAMENTI", span: allenamentiH.length, colorKey: "ALLENAMENTI_STAT" },
+      { label: "PARTITE", span: partiteH.length, colorKey: "PARTITE_STAT" },
+    ]);
+    xlsStyleHeaderRow(ws, 4, headers, XLS_EMERALD, 48);
+    const numberCols = new Set([1, ...range(giocatoreH.length + 1, headers.length)]);
+    xlsWriteDataRows(ws, 5, rows, { numberCols });
+    xlsFinalize(ws, 4);
+    xlsSetColWidths(ws, [6, 20, 16, 13, 12, 12, 12, 12, 12, 11, 12, 16, 8, 8, 10, 10, 17, 11, 12]);
+
+    await downloadWorkbook(wb, `statistiche-${activeSeason.name}.xlsx`);
     showToast("Excel statistiche esportato");
+  }
+
+  async function exportChampionshipExcel() {
+    const championship = activeSeason?.championship || {};
+    const phases = [
+      { key: "fase1", label: "Fase 1", showClassifica: true },
+      { key: "fase2", label: "Fase 2", showClassifica: true },
+      { key: "faseFinale", label: "Fase Finale", showClassifica: false },
+    ].filter((p) => championship[p.key]);
+    if (phases.length === 0) return showToast("Nessuna fase di campionato creata", "error");
+
+    const wb = new ExcelJS.Workbook();
+
+    phases.forEach(({ key, label, showClassifica }) => {
+      const phase = championship[key];
+      const teams = phase.teams || [];
+      const matchesList = phase.matches || [];
+      const usTeam = teams.find((t) => t.isUs);
+      const usName = usTeam?.name;
+      const ws = wb.addWorksheet(label);
+
+      let nextRow = 1;
+      const showStandings = showClassifica && teams.length > 0;
+
+      if (showStandings) {
+        const standings = computeStandings(teams, matchesList);
+        const classHeaders = ["Squadra", "G", "V", "N", "P", "GF", "GS", "DR", "Punti"];
+        xlsStyleTitleRow(ws, 1, classHeaders.length, `CLASSIFICA — ${label.toUpperCase()}`);
+        xlsStyleSubtitleRow(ws, 2, classHeaders.length, `${activeSeason.teamName || ""} · ${activeSeason.name}`);
+        xlsStyleGroupRow(ws, 3, [{ label: "CAMPIONATO", span: classHeaders.length }]);
+        xlsStyleHeaderRow(ws, 4, classHeaders, XLS_EMERALD_DARK);
+        standings.forEach((t, i) => {
+          const rowIdx = 5 + i;
+          const isUs = !!t.isUs;
+          const band = isUs ? "FFD1FAE5" : i % 2 === 1 ? XLS_LIGHT_GRAY : XLS_WHITE;
+          const values = [t.name, t.played, t.w, t.d, t.l, t.gf, t.ga, t.gf - t.ga, t.pts];
+          values.forEach((v, c) => {
+            const cell = ws.getCell(rowIdx, c + 1);
+            cell.value = v;
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: band } };
+            cell.border = xlsThinBorder();
+            const bold = isUs || c === 8;
+            cell.font = { name: "Arial", size: 10, bold, color: { argb: isUs ? XLS_EMERALD_DARK : XLS_TEXT_DARK } };
+            cell.alignment = { horizontal: c === 0 ? "left" : "center", vertical: "middle" };
+          });
+        });
+        // Nota: le larghezze colonna sono impostate una sola volta più sotto,
+        // con un compromesso valido sia per questa tabella sia per quella dei
+        // Risultati (condividono lo stesso foglio e le stesse colonne fisiche).
+        nextRow = 4 + standings.length + 3;
+      }
+
+      const teamById = (id) => teams.find((t) => t.id === id);
+      const sortedMatches = [...matchesList]
+        .filter((m) => m.played && m.homeGoals != null && m.awayGoals != null)
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
+      const resRows = sortedMatches.map((m) => [
+        formatDate(m.date), teamById(m.homeTeamId)?.name || "?", teamById(m.awayTeamId)?.name || "?", m.homeGoals, m.awayGoals,
+      ]);
+      const resHeaders = ["Data", "Casa", "Trasferta", "Gol Casa", "Gol Trasferta"];
+
+      let dataStart;
+      if (!showStandings) {
+        xlsStyleTitleRow(ws, 1, resHeaders.length, `RISULTATI — ${label.toUpperCase()}`);
+        xlsStyleSubtitleRow(
+          ws, 2, resHeaders.length,
+          `${activeSeason.teamName || ""} · ${activeSeason.name}${!showClassifica ? " · Nessuna classifica per questa fase" : ""}`
+        );
+        xlsStyleGroupRow(ws, 3, [{ label: "CAMPIONATO", span: resHeaders.length }]);
+        xlsStyleHeaderRow(ws, 4, resHeaders, XLS_EMERALD_DARK);
+        dataStart = 5;
+      } else {
+        ws.mergeCells(nextRow, 1, nextRow, resHeaders.length);
+        const cell = ws.getCell(nextRow, 1);
+        cell.value = `RISULTATI — ${label.toUpperCase()}`;
+        cell.font = { name: "Arial", size: 12, bold: true, color: { argb: XLS_WHITE } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XLS_NAVY } };
+        cell.alignment = { horizontal: "left", vertical: "middle", indent: 1 };
+        ws.getRow(nextRow).height = 22;
+        xlsStyleHeaderRow(ws, nextRow + 1, resHeaders, XLS_EMERALD_DARK);
+        dataStart = nextRow + 2;
+      }
+
+      const homeColors = {}, awayColors = {}, homeGoalColors = {}, awayGoalColors = {};
+      resRows.forEach((row, i) => {
+        if (row[1] === usName) homeColors[i] = XLS_EMERALD_DARK;
+        if (row[2] === usName) awayColors[i] = XLS_EMERALD_DARK;
+        const [hg, ag] = [row[3], row[4]];
+        if (hg > ag) {
+          homeGoalColors[i] = XLS_WIN_GREEN;
+          awayGoalColors[i] = XLS_LOSE_RED;
+        } else if (ag > hg) {
+          homeGoalColors[i] = XLS_LOSE_RED;
+          awayGoalColors[i] = XLS_WIN_GREEN;
+        } else {
+          homeGoalColors[i] = XLS_TEXT_DARK;
+          awayGoalColors[i] = XLS_TEXT_DARK;
+        }
+      });
+      xlsWriteDataRows(ws, dataStart, resRows, {
+        numberCols: new Set([4, 5]),
+        textColors: { 2: homeColors, 3: awayColors, 4: homeGoalColors, 5: awayGoalColors },
+        centerCols: new Set([2, 3]),
+      });
+      xlsSetColWidths(ws, showStandings ? [20, 20, 20, 11, 13, 7, 7, 7, 9] : [12, 20, 20, 11, 13]);
+      xlsFinalize(ws, 4);
+    });
+
+    await downloadWorkbook(wb, `campionato-${activeSeason.name}.xlsx`);
+    showToast("Excel campionato esportato");
   }
 
   return (
@@ -9072,6 +9282,9 @@ function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, l
             <Button variant="secondary" className="justify-start" onClick={exportStatisticsExcel}>
               <TrendingUp className="w-4 h-4" /> Statistiche giocatori (.xlsx)
             </Button>
+            <Button variant="secondary" className="justify-start" onClick={exportChampionshipExcel}>
+              <Award className="w-4 h-4" /> Classifica e risultati campionato (.xlsx)
+            </Button>
           </div>
         </Card>
       </div>
@@ -9099,34 +9312,181 @@ function buildPitchHTML(formation, assignments, players) {
   return `<div class="pitch">${markers}</div>`;
 }
 
-// Costruisce un foglio Excel con layout professionale: titolo, sottotitolo,
-// intestazioni raggruppate per area (con merge) e riquadro fisso sull'intestazione.
-// Nota: la libreria SheetJS gratuita usata nell'app non supporta colori/font delle celle
-// (funzionalità riservata alla versione Pro) — qui miglioriamo struttura, raggruppamenti,
-// larghezze colonne e blocco delle intestazioni, che restano invece pienamente supportati.
-function buildProfessionalSheet({ title, subtitle, groups, headers, rows, colWidths }) {
-  const totalCols = headers.length;
-  const aoa = [[title], [subtitle || ""]];
-  const groupRow = new Array(totalCols).fill("");
-  const merges = [];
-  let colIdx = 0;
-  (groups || []).forEach((g) => {
-    groupRow[colIdx] = g.label;
-    if (g.span > 1) merges.push({ s: { r: 2, c: colIdx }, e: { r: 2, c: colIdx + g.span - 1 } });
-    colIdx += g.span;
-  });
-  aoa.push(groupRow);
-  aoa.push(headers);
-  rows.forEach((r) => aoa.push(r));
+// ============================================================
+// EXPORT EXCEL — stile professionale (ExcelJS, con vera formattazione:
+// colori, grassetto, bordi, righe alternate — la libreria SheetJS usata
+// prima non lo supportava nella versione gratuita). Palette e struttura
+// concordate e validate con delle bozze prima di essere implementate qui.
+// ============================================================
+const XLS_EMERALD = "FF10B981";
+const XLS_EMERALD_DARK = "FF047857";
+const XLS_NAVY = "FF0F172A";
+const XLS_LIGHT_GRAY = "FFF1F5F9";
+const XLS_WHITE = "FFFFFFFF";
+const XLS_TEXT_DARK = "FF1E293B";
+const XLS_GOLD = "FFB45309";
+const XLS_WIN_GREEN = "FF15803D";
+const XLS_LOSE_RED = "FFDC2626";
 
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: Math.max(0, totalCols - 1) } });
-  merges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: Math.max(0, totalCols - 1) } });
-  ws["!merges"] = merges;
-  ws["!cols"] = colWidths || headers.map(() => ({ wch: 14 }));
-  ws["!rows"] = [{ hpt: 22 }, { hpt: 16 }, { hpt: 18 }, { hpt: 18 }];
-  ws["!freeze"] = { xSplit: 0, ySplit: 4, topLeftCell: XLSX.utils.encode_cell({ r: 4, c: 0 }), activePane: "bottomLeft", state: "frozen" };
-  return ws;
+// Colori distinti per gruppo di colonne, per riconoscere a colpo d'occhio le
+// diverse aree di ciascun foglio.
+const XLS_GROUP_COLORS = {
+  "DATI ANAGRAFICI": "FF334155",
+  "CARATTERISTICHE BASE": "FF1D4ED8",
+  "STATISTICHE MENTALI": "FF7C3AED",
+  "TECNICO/TATTICHE": "FFC2410C",
+  PORTIERE: "FF0F172A",
+  GIOCATORE: "FF334155",
+  ALLENAMENTI: XLS_EMERALD_DARK,
+  PARTITE: XLS_EMERALD_DARK,
+  ALLENAMENTI_STAT: "FF1D4ED8",
+  PARTITE_STAT: XLS_GOLD,
+  "DATI PARTITA": "FF334155",
+  RISULTATO: XLS_EMERALD_DARK,
+  TABELLINO: "FF1D4ED8",
+  "PRESENZE PER GIOCATORE": XLS_EMERALD_DARK,
+  "DETTAGLIO ASSENZE": XLS_GOLD,
+  AMICHEVOLE: "FF0284C7",
+  CAMPIONATO: XLS_EMERALD_DARK,
+  TORNEO: XLS_GOLD,
+  TOTALE: "FF334155",
+};
+
+const XLS_MATCH_TYPE_COLOR = {
+  Campionato: XLS_EMERALD_DARK,
+  Amichevole: "FF0369A1",
+  Torneo: XLS_GOLD,
+};
+
+// Genera un array di interi da start a end inclusi (usato per indicare
+// insiemi di colonne consecutive negli export Excel).
+function range(start, end) {
+  const out = [];
+  for (let i = start; i <= end; i++) out.push(i);
+  return out;
+}
+
+function xlsThinBorder() {
+  const side = { style: "thin", color: { argb: "FFD1D5DB" } };
+  return { top: side, bottom: side, left: side, right: side };
+}
+
+function xlsStyleTitleRow(ws, row, ncols, text) {
+  ws.mergeCells(row, 1, row, Math.max(1, ncols));
+  const cell = ws.getCell(row, 1);
+  cell.value = text;
+  cell.font = { name: "Arial", size: 14, bold: true, color: { argb: XLS_WHITE } };
+  cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XLS_NAVY } };
+  cell.alignment = { horizontal: "left", vertical: "middle", indent: 1 };
+  ws.getRow(row).height = 26;
+}
+
+function xlsStyleSubtitleRow(ws, row, ncols, text) {
+  ws.mergeCells(row, 1, row, Math.max(1, ncols));
+  const cell = ws.getCell(row, 1);
+  cell.value = text;
+  cell.font = { name: "Arial", size: 10, italic: true, color: { argb: "FFCBD5E1" } };
+  cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XLS_NAVY } };
+  cell.alignment = { horizontal: "left", vertical: "middle", indent: 1 };
+  ws.getRow(row).height = 18;
+}
+
+// groups: [{ label, span, colorKey? }] — colorKey opzionale quando l'etichetta
+// visibile deve avere un colore diverso da quello già associato al suo testo
+// (es. due gruppi "ALLENAMENTI" in fogli diversi, con colori diversi).
+function xlsStyleGroupRow(ws, row, groups) {
+  let col = 1;
+  groups.forEach(({ label, span, colorKey }) => {
+    if (span <= 0) return;
+    const endCol = col + span - 1;
+    if (span > 1) ws.mergeCells(row, col, row, endCol);
+    const color = XLS_GROUP_COLORS[colorKey || label] || XLS_EMERALD_DARK;
+    for (let c = col; c <= endCol; c++) {
+      const cell = ws.getCell(row, c);
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: color } };
+      cell.font = { name: "Arial", size: 9, bold: true, color: { argb: XLS_WHITE } };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.border = xlsThinBorder();
+    }
+    ws.getCell(row, col).value = label;
+    col = endCol + 1;
+  });
+  ws.getRow(row).height = 20;
+}
+
+function xlsStyleHeaderRow(ws, row, headers, accent = XLS_EMERALD, height = 32) {
+  headers.forEach((h, i) => {
+    const cell = ws.getCell(row, i + 1);
+    cell.value = h;
+    cell.font = { name: "Arial", size: 10, bold: true, color: { argb: XLS_WHITE } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: accent } };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    cell.border = xlsThinBorder();
+  });
+  ws.getRow(row).height = height;
+}
+
+// options: { numberCols: Set, goldCols: Set, textColors: {col: {rowOffset: argbColor}}, centerCols: Set }
+// text_colors ha priorità sul colore "numero" di default, e centerCols forza
+// la centratura indipendentemente dal colore (es. nomi squadra nei risultati).
+function xlsWriteDataRows(ws, startRow, rows, options = {}) {
+  const { numberCols = new Set(), goldCols = new Set(), textColors = {}, centerCols = new Set() } = options;
+  rows.forEach((rowData, r) => {
+    const rowIdx = startRow + r;
+    const band = r % 2 === 1 ? XLS_LIGHT_GRAY : XLS_WHITE;
+    rowData.forEach((value, i) => {
+      const c = i + 1;
+      const cell = ws.getCell(rowIdx, c);
+      cell.value = value;
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: band } };
+      cell.border = xlsThinBorder();
+      const overrideColor = textColors[c] ? textColors[c][r] : null;
+      const isCenter = centerCols.has(c) || numberCols.has(c) || goldCols.has(c);
+      let color, bold;
+      if (goldCols.has(c)) {
+        color = XLS_GOLD;
+        bold = true;
+      } else if (overrideColor) {
+        color = overrideColor;
+        bold = true;
+      } else if (numberCols.has(c)) {
+        color = XLS_EMERALD_DARK;
+        bold = true;
+      } else {
+        color = XLS_TEXT_DARK;
+        bold = false;
+      }
+      cell.font = { name: "Arial", size: 10, bold, color: { argb: color } };
+      cell.alignment = { horizontal: isCenter ? "center" : "left", vertical: "middle", wrapText: !isCenter };
+    });
+  });
+  return startRow + rows.length - 1;
+}
+
+function xlsSetColWidths(ws, widths) {
+  widths.forEach((w, i) => {
+    ws.getColumn(i + 1).width = w;
+  });
+}
+
+function xlsFinalize(ws, headerRow) {
+  ws.views = [{ state: "frozen", ySplit: headerRow, showGridLines: false }];
+}
+
+// Scarica un Workbook ExcelJS come file .xlsx (equivalente browser di
+// XLSX.writeFile, dato che ExcelJS produce un Buffer invece di scrivere
+// direttamente su disco).
+async function downloadWorkbook(workbook, filename) {
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // Formatta la data corrente come es. "12ago26" (gg + mese abbreviato IT + aa),
