@@ -435,6 +435,11 @@ const MATCH_TYPE_STYLES = {
   Torneo: "bg-amber-500/15 text-amber-400 border-amber-500/30",
 };
 const MATCH_TYPE_ICONS = { Campionato: Trophy, Amichevole: Handshake, Torneo: Award };
+const MATCH_TYPE_TEXT_COLOR = {
+  Campionato: "text-emerald-400",
+  Amichevole: "text-sky-400",
+  Torneo: "text-amber-400",
+};
 const MATCH_TYPE_BORDER = {
   Campionato: "#10b981",
   Amichevole: "#0ea5e9",
@@ -3670,25 +3675,25 @@ function PlayersBoard({ players, trainings, matches, onSelect }) {
   return (
     <div className="overflow-x-auto rounded-2xl border border-white/10">
       <table className="w-full text-sm">
-        <thead>
-          <tr className="bg-slate-900/80 text-left text-[11px] uppercase tracking-wide text-slate-500">
-            <th className="px-3 py-2.5">#</th>
-            <th className="px-3 py-2.5">Giocatore</th>
-            <th className="px-2 py-2.5 text-center bg-emerald-500/10 text-emerald-400 leading-tight">
+        <thead className="sticky top-16 z-20">
+          <tr className="bg-slate-900 text-left text-[11px] uppercase tracking-wide text-slate-500">
+            <th className="px-3 py-2.5 bg-slate-900">#</th>
+            <th className="px-3 py-2.5 bg-slate-900">Giocatore</th>
+            <th className="px-2 py-2.5 text-center bg-emerald-950 text-emerald-400 leading-tight">
               <span className="block">Presenze</span><span className="block">All.</span>
             </th>
-            <th className="px-2 py-2.5 text-center bg-rose-500/10 text-rose-400 leading-tight">
+            <th className="px-2 py-2.5 text-center bg-rose-950 text-rose-400 leading-tight">
               <span className="block">Assenze</span><span className="block">All.</span>
             </th>
-            <th className="px-2 py-2.5 text-center bg-rose-500/10 text-rose-400 leading-tight">
+            <th className="px-2 py-2.5 text-center bg-rose-950 text-rose-400 leading-tight">
               <span className="flex items-center justify-center gap-1"><HeartPulse className="w-3 h-3" /> Infort.</span>
               <span className="block">Allen.</span>
             </th>
-            <th className="px-2 py-2.5 text-center leading-tight"><span className="block">Convo-</span><span className="block">cazioni</span></th>
-            <th className="px-2 py-2.5 text-center">Reti</th>
-            <th className="px-2 py-2.5 text-center">Assist</th>
-            <th className="px-2 py-2.5 text-center leading-tight"><span className="block">Amm.</span></th>
-            <th className="px-2 py-2.5 text-center leading-tight"><span className="block">Esp.</span></th>
+            <th className="px-2 py-2.5 text-center bg-slate-900 leading-tight"><span className="block">Convo-</span><span className="block">cazioni</span></th>
+            <th className="px-2 py-2.5 text-center bg-slate-900">Reti</th>
+            <th className="px-2 py-2.5 text-center bg-slate-900">Assist</th>
+            <th className="px-2 py-2.5 text-center bg-slate-900 leading-tight"><span className="block">Amm.</span></th>
+            <th className="px-2 py-2.5 text-center bg-slate-900 leading-tight"><span className="block">Esp.</span></th>
           </tr>
         </thead>
         <tbody>
@@ -4422,13 +4427,13 @@ function TrainingsSection({ season, updateSeason, library, updateLibrary, showTo
       ) : sessioniView === "table" ? (
         <div className="overflow-x-auto rounded-2xl border border-white/10">
           <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-slate-900/80 text-left text-[11px] uppercase tracking-wide text-slate-500">
-                <th className="px-3 py-2.5">Data</th>
-                <th className="px-3 py-2.5">Focus Tecnico</th>
-                <th className="px-2 py-2.5 text-center bg-emerald-500/10 text-emerald-400">N. Presenti</th>
-                <th className="px-2 py-2.5 text-center bg-rose-500/10 text-rose-400">N. Assenti</th>
-                <th className="px-2 py-2.5 text-center">% Presenti</th>
+            <thead className="sticky top-16 z-20">
+              <tr className="bg-slate-900 text-left text-[11px] uppercase tracking-wide text-slate-500">
+                <th className="px-3 py-2.5 bg-slate-900">Data</th>
+                <th className="px-3 py-2.5 bg-slate-900">Focus Tecnico</th>
+                <th className="px-2 py-2.5 text-center bg-emerald-950 text-emerald-400">N. Presenti</th>
+                <th className="px-2 py-2.5 text-center bg-rose-950 text-rose-400">N. Assenti</th>
+                <th className="px-2 py-2.5 text-center bg-slate-900">% Presenti</th>
               </tr>
             </thead>
             <tbody>
@@ -4438,9 +4443,17 @@ function TrainingsSection({ season, updateSeason, library, updateLibrary, showTo
                 const absent = values.filter((v) => v === "Assente" || v === "Giustificato").length;
                 const pct = values.length ? Math.round((present / values.length) * 100) : 0;
                 const linkedFocus = focusTecnici.find((f) => f.id === t.focusTecnicoId);
+                const isUpcoming = t.date >= todayISO();
                 return (
                   <tr key={t.id} onClick={() => setSelected(t)} className="border-t border-white/5 hover:bg-white/5 cursor-pointer">
-                    <td className="px-3 py-2.5 font-medium text-slate-200">{formatDate(t.date)} · {t.time || "--:--"}</td>
+                    <td className="px-3 py-2.5 font-medium text-slate-200">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span>{formatDate(t.date)} · {t.time || "--:--"}</span>
+                        {isUpcoming && (
+                          <Badge className="bg-amber-500/15 text-amber-400 border-amber-500/30">Programmato</Badge>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-3 py-2.5 text-slate-400">{linkedFocus?.title || t.focus || "Nessun focus indicato"}</td>
                     <td className="px-2 py-2.5 text-center bg-emerald-500/10 text-emerald-400 font-bold">{present}</td>
                     <td className="px-2 py-2.5 text-center bg-rose-500/10 text-rose-400 font-bold">{absent}</td>
@@ -6339,21 +6352,21 @@ function ConvocazioniMatrix({ matches, players }) {
       </div>
       <div className="overflow-x-auto rounded-2xl border border-white/10">
         <table className="text-sm border-collapse">
-          <thead>
-            <tr className="bg-slate-900/80 text-left text-[11px] uppercase tracking-wide text-slate-500">
-              <th className="px-3 py-2.5 sticky left-0 bg-slate-900/95 z-10">Giocatore</th>
+          <thead className="sticky top-16 z-20">
+            <tr className="bg-slate-900 text-left text-[11px] uppercase tracking-wide text-slate-500">
+              <th className="px-3 py-2.5 sticky left-0 bg-slate-900 z-30">Giocatore</th>
               {cols.map((m) => (
-                <th key={m.id} className="px-1 py-2 text-center align-bottom" style={{ minWidth: 34 }}>
+                <th key={m.id} className="px-1 py-2 text-center align-bottom bg-slate-900" style={{ minWidth: 34 }}>
                   <div
-                    className="whitespace-nowrap mx-auto"
+                    className={`whitespace-nowrap mx-auto font-semibold normal-case ${MATCH_TYPE_TEXT_COLOR[m.matchType] || "text-slate-300"}`}
                     style={{ writingMode: "vertical-rl", transform: "rotate(180deg)", height: 110 }}
-                    title={`${formatDate(m.date)} vs ${m.opponent}`}
+                    title={`${formatDate(m.date)} · ${m.matchType || ""} vs ${m.opponent}`}
                   >
-                    {formatDate(m.date)} vs {m.opponent}
+                    vs {m.opponent}
                   </div>
                 </th>
               ))}
-              <th className="px-2 py-2.5 text-center bg-emerald-500/10 text-emerald-400">Tot.</th>
+              <th className="px-2 py-2.5 text-center bg-emerald-950 text-emerald-400">Tot.</th>
             </tr>
           </thead>
           <tbody>
