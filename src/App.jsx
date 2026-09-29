@@ -3673,9 +3673,9 @@ function PlayersBoard({ players, trainings, matches, onSelect }) {
   }
   const sorted = sortPlayersByRole(players);
   return (
-    <div className="overflow-x-auto rounded-2xl border border-white/10">
+    <div className="overflow-auto rounded-2xl border border-white/10" style={{ maxHeight: "72vh" }}>
       <table className="w-full text-sm">
-        <thead className="sticky top-16 z-20">
+        <thead className="sticky top-0 z-20">
           <tr className="bg-slate-900 text-left text-[11px] uppercase tracking-wide text-slate-500">
             <th className="px-3 py-2.5 bg-slate-900">#</th>
             <th className="px-3 py-2.5 bg-slate-900">Giocatore</th>
@@ -4425,9 +4425,9 @@ function TrainingsSection({ season, updateSeason, library, updateLibrary, showTo
       ) : trainings.length === 0 ? (
         <EmptyState icon={Activity} text="Nessun allenamento registrato. Crea la prima sessione." />
       ) : sessioniView === "table" ? (
-        <div className="overflow-x-auto rounded-2xl border border-white/10">
+        <div className="overflow-auto rounded-2xl border border-white/10" style={{ maxHeight: "72vh" }}>
           <table className="w-full text-sm">
-            <thead className="sticky top-16 z-20">
+            <thead className="sticky top-0 z-20">
               <tr className="bg-slate-900 text-left text-[11px] uppercase tracking-wide text-slate-500">
                 <th className="px-3 py-2.5 bg-slate-900">Data</th>
                 <th className="px-3 py-2.5 bg-slate-900">Focus Tecnico</th>
@@ -6350,9 +6350,9 @@ function ConvocazioniMatrix({ matches, players }) {
           </button>
         ))}
       </div>
-      <div className="overflow-x-auto rounded-2xl border border-white/10">
+      <div className="overflow-auto rounded-2xl border border-white/10" style={{ maxHeight: "72vh" }}>
         <table className="text-sm border-collapse">
-          <thead className="sticky top-16 z-20">
+          <thead className="sticky top-0 z-20">
             <tr className="bg-slate-900 text-left text-[11px] uppercase tracking-wide text-slate-500">
               <th className="px-3 py-2.5 sticky left-0 bg-slate-900 z-30">Giocatore</th>
               {cols.map((m) => (
@@ -8685,18 +8685,19 @@ function FormationRolesManager({ items, onChange, showToast }) {
             {editingIdx === idx ? (
               <>
                 <input
-                  className={`${inputClass} w-20`}
+                  className={`${inputClass} !w-20 shrink-0`}
                   value={editForm.label}
                   onChange={(e) => setEditForm({ ...editForm, label: e.target.value })}
                   maxLength={6}
                 />
                 <input
-                  className={`${inputClass} flex-1`}
+                  className={`${inputClass} flex-1 min-w-0`}
                   value={editForm.description}
                   onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                  placeholder="Descrizione"
                 />
                 <select
-                  className={`${inputClass} w-36`}
+                  className={`${inputClass} !w-36 shrink-0`}
                   value={editForm.role}
                   onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
                 >
