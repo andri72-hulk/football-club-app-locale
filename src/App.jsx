@@ -25,6 +25,19 @@ import {
 
 const ROLES = ["Portiere", "Difensore", "Centrocampista", "Attaccante"];
 
+function roleSortIndex(role) {
+  const idx = ROLES.indexOf(role);
+  return idx === -1 ? ROLES.length : idx;
+}
+
+function sortPlayersByRole(list) {
+  return [...list].sort((a, b) => {
+    const r = roleSortIndex(a.role) - roleSortIndex(b.role);
+    if (r !== 0) return r;
+    return (a.number ?? 999) - (b.number ?? 999);
+  });
+}
+
 const ROLE_COLORS = {
   Portiere: "bg-amber-500/15 text-amber-400 border-amber-500/30",
   Difensore: "bg-sky-500/15 text-sky-400 border-sky-500/30",
@@ -56,7 +69,7 @@ const MEDICAL_COLORS = {
   Squalificato: "bg-slate-500/15 text-slate-400 border-slate-500/30",
 };
 
-const ATTENDANCE_STATUS = ["Presente", "Assente", "Giustificato", "Infortunato"];
+const ATTENDANCE_STATUS = ["Presente", "Assente", "Infortunato"];
 
 const ATTENDANCE_COLORS = {
   Presente: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
@@ -393,6 +406,7 @@ function defaultConfig() {
     exerciseTypes: [...EXERCISE_TYPES],
     categories: [...DEFAULT_CATEGORIES],
     dossierCategories: [...DOSSIER_CATEGORIES],
+    formationRoles: FORMATION_POSITION_LIBRARY.map((p) => ({ ...p })),
   };
 }
 
@@ -1422,8 +1436,9 @@ function computePlayerStats(playerId, trainings, matches) {
   const t = trainings || [];
   const m = matches || [];
   const presenze = t.filter((tr) => tr.attendance?.[playerId] === "Presente").length;
-  const assenze = t.filter((tr) => tr.attendance?.[playerId] === "Assente").length;
-  const giustificati = t.filter((tr) => tr.attendance?.[playerId] === "Giustificato").length;
+  // "Giustificato" non è più una distinzione mostrata: viene conteggiato come Assente.
+  const assenze = t.filter((tr) => tr.attendance?.[playerId] === "Assente" || tr.attendance?.[playerId] === "Giustificato").length;
+  const giustificati = 0;
   const infortuni = t.filter((tr) => tr.attendance?.[playerId] === "Infortunato").length;
   const convocazioni = m.filter((match) => (match.convocati || []).includes(playerId)).length;
   const reti = m.reduce((sum, match) => sum + (match.scorers || []).filter((s) => s.playerId === playerId).reduce((a, s) => a + (Number(s.goals) || 0), 0), 0);
@@ -3391,11 +3406,13 @@ function PlayersSection({ season, updateSeason, showToast, view, setView, jumpTo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jumpToPlayerId]);
 
-  const filtered = players.filter((p) => {
-    const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase());
-    const matchesRole = roleFilter === "Tutti" || p.role === roleFilter;
-    return matchesSearch && matchesRole;
-  });
+  const filtered = sortPlayersByRole(
+    players.filter((p) => {
+      const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase());
+      const matchesRole = roleFilter === "Tutti" || p.role === roleFilter;
+      return matchesSearch && matchesRole;
+    })
+  );
 
   function addPlayer(playerData) {
     updateSeason((s) => ({ players: [...(s.players || []), { ...playerData, id: uid("player") }] }));
@@ -3649,7 +3666,7 @@ function PlayersBoard({ players, trainings, matches, onSelect }) {
   if (players.length === 0) {
     return <EmptyState icon={Users} text="Nessun giocatore trovato." />;
   }
-  const sorted = [...players].sort((a, b) => (a.number ?? 999) - (b.number ?? 999));
+  const sorted = sortPlayersByRole(players);
   return (
     <div className="overflow-x-auto rounded-2xl border border-white/10">
       <table className="w-full text-sm">
@@ -3662,9 +3679,6 @@ function PlayersBoard({ players, trainings, matches, onSelect }) {
             </th>
             <th className="px-2 py-2.5 text-center bg-rose-500/10 text-rose-400 leading-tight">
               <span className="block">Assenze</span><span className="block">All.</span>
-            </th>
-            <th className="px-2 py-2.5 text-center bg-amber-500/10 text-amber-400 leading-tight">
-              <span className="block">Assente</span><span className="block">Giust.</span>
             </th>
             <th className="px-2 py-2.5 text-center bg-rose-500/10 text-rose-400 leading-tight">
               <span className="flex items-center justify-center gap-1"><HeartPulse className="w-3 h-3" /> Infort.</span>
@@ -3694,7 +3708,6 @@ function PlayersBoard({ players, trainings, matches, onSelect }) {
                 </td>
                 <td className="px-2 py-2.5 text-center bg-emerald-500/10 text-emerald-400 font-bold">{s.presenze}</td>
                 <td className="px-2 py-2.5 text-center bg-rose-500/10 text-rose-400 font-bold">{s.assenze}</td>
-                <td className="px-2 py-2.5 text-center bg-amber-500/10 text-amber-400 font-bold">{s.giustificati}</td>
                 <td className="px-2 py-2.5 text-center bg-rose-500/10 text-rose-400 font-bold">{s.infortuni}</td>
                 <td className="px-2 py-2.5 text-center text-sky-400">{s.convocazioni}</td>
                 <td className="px-2 py-2.5 text-center text-slate-200 font-semibold">{s.reti}</td>
@@ -4216,6 +4229,7 @@ function TrainingsSection({ season, updateSeason, library, updateLibrary, showTo
   const players = season.players || [];
   const focusTecnici = season.focusTecnici || [];
   const [subTab, setSubTab] = useState("sessioni");
+  const [sessioniView, setSessioniView] = useState("cards");
   const [showAdd, setShowAdd] = useState(false);
   const [selected, setSelected] = useState(null);
 
@@ -4328,6 +4342,20 @@ function TrainingsSection({ season, updateSeason, library, updateLibrary, showTo
         action={
           subTab === "sessioni" && (
             <div className="flex gap-2 flex-wrap">
+              <div className="flex rounded-xl overflow-hidden border border-white/10">
+                <button
+                  onClick={() => setSessioniView("cards")}
+                  className={`px-3 py-2 text-xs font-medium ${sessioniView === "cards" ? "bg-emerald-500 text-slate-950" : "text-slate-400"}`}
+                >
+                  Sessioni
+                </button>
+                <button
+                  onClick={() => setSessioniView("table")}
+                  className={`px-3 py-2 text-xs font-medium ${sessioniView === "table" ? "bg-emerald-500 text-slate-950" : "text-slate-400"}`}
+                >
+                  Tabella
+                </button>
+              </div>
               <Button onClick={() => setShowAdd(true)}>
                 <Plus className="w-4 h-4" /> Crea Nuovo Allenamento
               </Button>
@@ -4391,6 +4419,38 @@ function TrainingsSection({ season, updateSeason, library, updateLibrary, showTo
         />
       ) : trainings.length === 0 ? (
         <EmptyState icon={Activity} text="Nessun allenamento registrato. Crea la prima sessione." />
+      ) : sessioniView === "table" ? (
+        <div className="overflow-x-auto rounded-2xl border border-white/10">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-900/80 text-left text-[11px] uppercase tracking-wide text-slate-500">
+                <th className="px-3 py-2.5">Data</th>
+                <th className="px-3 py-2.5">Focus Tecnico</th>
+                <th className="px-2 py-2.5 text-center bg-emerald-500/10 text-emerald-400">N. Presenti</th>
+                <th className="px-2 py-2.5 text-center bg-rose-500/10 text-rose-400">N. Assenti</th>
+                <th className="px-2 py-2.5 text-center">% Presenti</th>
+              </tr>
+            </thead>
+            <tbody>
+              {trainings.map((t) => {
+                const values = Object.values(t.attendance || {});
+                const present = values.filter((v) => v === "Presente").length;
+                const absent = values.filter((v) => v === "Assente" || v === "Giustificato").length;
+                const pct = values.length ? Math.round((present / values.length) * 100) : 0;
+                const linkedFocus = focusTecnici.find((f) => f.id === t.focusTecnicoId);
+                return (
+                  <tr key={t.id} onClick={() => setSelected(t)} className="border-t border-white/5 hover:bg-white/5 cursor-pointer">
+                    <td className="px-3 py-2.5 font-medium text-slate-200">{formatDate(t.date)} · {t.time || "--:--"}</td>
+                    <td className="px-3 py-2.5 text-slate-400">{linkedFocus?.title || t.focus || "Nessun focus indicato"}</td>
+                    <td className="px-2 py-2.5 text-center bg-emerald-500/10 text-emerald-400 font-bold">{present}</td>
+                    <td className="px-2 py-2.5 text-center bg-rose-500/10 text-rose-400 font-bold">{absent}</td>
+                    <td className="px-2 py-2.5 text-center text-slate-200 font-semibold">{pct}%</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       ) : (
         <div className="space-y-3">
           {trainings.map((t) => {
@@ -5824,8 +5884,8 @@ function TrainingDetail({ training, players, focusTecnici, onUpdate, onDelete })
   const attendance = training.attendance || {};
   const values = Object.values(attendance);
   const present = values.filter((v) => v === "Presente").length;
-  const absent = values.filter((v) => v === "Assente").length;
-  const justified = values.filter((v) => v === "Giustificato").length;
+  // "Giustificato" (legacy) viene conteggiato insieme ad "Assente": non è più una distinzione mostrata.
+  const absent = values.filter((v) => v === "Assente" || v === "Giustificato").length;
   const injured = values.filter((v) => v === "Infortunato").length;
   const pct = values.length ? Math.round((present / values.length) * 100) : 0;
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -5840,19 +5900,19 @@ function TrainingDetail({ training, players, focusTecnici, onUpdate, onDelete })
   }
 
   function playersByStatus(status) {
+    if (status === "Assente") return players.filter((p) => attendance[p.id] === "Assente" || attendance[p.id] === "Giustificato");
     return players.filter((p) => attendance[p.id] === status);
   }
 
   const summary = [
     { status: "Presente", count: present, color: "text-emerald-400" },
     { status: "Assente", count: absent, color: "text-rose-400" },
-    { status: "Giustificato", count: justified, color: "text-amber-400" },
     { status: "Infortunato", count: injured, color: "text-slate-400" },
   ];
 
   function downloadTrainingSheet() {
     let body = `<h1>Scheda Allenamento</h1><p>${formatDate(training.date)} · ${training.time}</p>`;
-    body += `<p><strong>Presenti:</strong> ${present} · <strong>Assenti:</strong> ${absent} · <strong>Giustificati:</strong> ${justified} · <strong>Infortunati:</strong> ${injured}</p>`;
+    body += `<p><strong>Presenti:</strong> ${present} · <strong>Assenti:</strong> ${absent} · <strong>Infortunati:</strong> ${injured}</p>`;
     if (linkedFocus) {
       body += `<h2>${linkedFocus.title} — Durata totale: ${totalFocusMinutes(linkedFocus)} min</h2><ol>`;
       (linkedFocus.exercises || []).forEach((ex, i) => {
@@ -6025,6 +6085,7 @@ function TrainingDetail({ training, players, focusTecnici, onUpdate, onDelete })
 function MatchesSection({ season, updateSeason, showToast }) {
   const matches = [...(season.matches || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
   const players = season.players || [];
+  const [subTab, setSubTab] = useState("elenco");
   const [filter, setFilter] = useState("Programmata");
   const [typeFilter, setTypeFilter] = useState("Tutte");
   const [showAdd, setShowAdd] = useState(false);
@@ -6073,22 +6134,45 @@ function MatchesSection({ season, updateSeason, showToast }) {
         title="Partite"
         icon={Trophy}
         action={
-          <div className="flex gap-2 flex-wrap">
-            <Button onClick={() => setShowAdd(true)}>
-              <Plus className="w-4 h-4" /> Programma Partita
-            </Button>
-            <SectionResetButton
-              label="Azzera Partite"
-              confirmText="Eliminare tutte le partite, programmate e disputate?"
-              onConfirm={() => {
-                updateSeason(() => ({ matches: [] }));
-                showToast("Partite azzerate");
-              }}
-            />
-          </div>
+          subTab === "elenco" && (
+            <div className="flex gap-2 flex-wrap">
+              <Button onClick={() => setShowAdd(true)}>
+                <Plus className="w-4 h-4" /> Programma Partita
+              </Button>
+              <SectionResetButton
+                label="Azzera Partite"
+                confirmText="Eliminare tutte le partite, programmate e disputate?"
+                onConfirm={() => {
+                  updateSeason(() => ({ matches: [] }));
+                  showToast("Partite azzerate");
+                }}
+              />
+            </div>
+          )
         }
       />
 
+      <div className="flex gap-2 mb-5 flex-wrap">
+        {[
+          { id: "elenco", label: "Elenco" },
+          { id: "convocazioni", label: "Convocazioni" },
+        ].map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setSubTab(t.id)}
+            className={`rounded-full px-4 py-2 text-xs font-semibold border transition-colors ${
+              subTab === t.id ? "bg-emerald-500 text-slate-950 border-emerald-500" : "border-white/10 text-slate-400"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {subTab === "convocazioni" ? (
+        <ConvocazioniMatrix matches={matches} players={players} />
+      ) : (
+        <>
       <div className="flex gap-2 mb-3">
         {["Programmata", "Disputata"].map((f) => (
           <button
@@ -6197,6 +6281,117 @@ function MatchesSection({ season, updateSeason, showToast }) {
           />
         )}
       </Modal>
+      </>
+      )}
+    </div>
+  );
+}
+
+function ConvocazioniMatrix({ matches, players }) {
+  const [typeFilter, setTypeFilter] = useState("Tutte");
+  const rows = sortPlayersByRole(players);
+  const cols = [...matches]
+    .filter((m) => m.status === "Disputata")
+    .filter((m) => typeFilter === "Tutte" || m.matchType === typeFilter)
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  if (players.length === 0) {
+    return <EmptyState icon={Users} text="Nessun giocatore in rosa." />;
+  }
+  if (cols.length === 0) {
+    return (
+      <div>
+        <div className="flex gap-2 mb-5 flex-wrap">
+          {["Tutte", ...MATCH_TYPES].map((t) => (
+            <button
+              key={t}
+              onClick={() => setTypeFilter(t)}
+              className={`rounded-full px-3.5 py-1.5 text-[11px] font-medium border transition-colors ${
+                typeFilter === t ? "bg-white/10 text-slate-100 border-white/30" : "border-white/10 text-slate-500"
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        <EmptyState icon={Trophy} text="Nessuna partita disputata per questo filtro." />
+      </div>
+    );
+  }
+
+  const rowTotals = rows.map((p) => cols.filter((m) => (m.convocati || []).includes(p.id)).length);
+  const colTotals = cols.map((m) => players.filter((p) => (m.convocati || []).includes(p.id)).length);
+
+  return (
+    <div>
+      <div className="flex gap-2 mb-5 flex-wrap">
+        {["Tutte", ...MATCH_TYPES].map((t) => (
+          <button
+            key={t}
+            onClick={() => setTypeFilter(t)}
+            className={`rounded-full px-3.5 py-1.5 text-[11px] font-medium border transition-colors ${
+              typeFilter === t ? "bg-white/10 text-slate-100 border-white/30" : "border-white/10 text-slate-500"
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+      <div className="overflow-x-auto rounded-2xl border border-white/10">
+        <table className="text-sm border-collapse">
+          <thead>
+            <tr className="bg-slate-900/80 text-left text-[11px] uppercase tracking-wide text-slate-500">
+              <th className="px-3 py-2.5 sticky left-0 bg-slate-900/95 z-10">Giocatore</th>
+              {cols.map((m) => (
+                <th key={m.id} className="px-1 py-2 text-center align-bottom" style={{ minWidth: 34 }}>
+                  <div
+                    className="whitespace-nowrap mx-auto"
+                    style={{ writingMode: "vertical-rl", transform: "rotate(180deg)", height: 110 }}
+                    title={`${formatDate(m.date)} vs ${m.opponent}`}
+                  >
+                    {formatDate(m.date)} vs {m.opponent}
+                  </div>
+                </th>
+              ))}
+              <th className="px-2 py-2.5 text-center bg-emerald-500/10 text-emerald-400">Tot.</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((p, ri) => (
+              <tr key={p.id} className="border-t border-white/5 hover:bg-white/5">
+                <td className="px-3 py-2 sticky left-0 bg-slate-950/95 z-10">
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-200 font-medium truncate">{p.name}</span>
+                    <Badge className={ROLE_COLORS[p.role]}>{p.role?.slice(0, 3)}</Badge>
+                  </div>
+                </td>
+                {cols.map((m) => {
+                  const called = (m.convocati || []).includes(p.id);
+                  return (
+                    <td key={m.id} className="px-1 py-2 text-center">
+                      {called ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 mx-auto" />
+                      ) : (
+                        <span className="text-slate-700">—</span>
+                      )}
+                    </td>
+                  );
+                })}
+                <td className="px-2 py-2 text-center font-bold text-emerald-400 bg-emerald-500/10">{rowTotals[ri]}</td>
+              </tr>
+            ))}
+            <tr className="border-t border-white/10 bg-white/5 font-bold">
+              <td className="px-3 py-2 sticky left-0 bg-slate-950 z-10 text-slate-300">Totale convocati</td>
+              {cols.map((m, ci) => (
+                <td key={m.id} className="px-1 py-2 text-center text-slate-200">{colTotals[ci]}</td>
+              ))}
+              <td className="px-2 py-2 text-center text-emerald-400 bg-emerald-500/10">
+                {rowTotals.reduce((a, b) => a + b, 0)}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -6820,10 +7015,12 @@ function StrengthsWeaknesses({ formation, compact }) {
 // Mostra solo le sigle effettivamente presenti nel modulo corrente, se fornito;
 // altrimenti l'elenco completo.
 function PositionLegend({ formation }) {
+  const config = useConfig();
+  const library = config.formationRoles && config.formationRoles.length ? config.formationRoles : FORMATION_POSITION_LIBRARY;
   const labelsInUse = formation ? new Set((formation.positions || []).map((p) => p.label)) : null;
   const entries = labelsInUse
-    ? FORMATION_POSITION_LIBRARY.filter((p) => labelsInUse.has(p.label))
-    : FORMATION_POSITION_LIBRARY;
+    ? library.filter((p) => labelsInUse.has(p.label))
+    : library;
   return (
     <div className="rounded-xl border border-white/10 bg-white/5 p-3.5 mt-4">
       <p className="text-xs font-bold text-slate-300 uppercase tracking-wide mb-2.5">Legenda posizioni</p>
@@ -7088,8 +7285,8 @@ function emptyNewFormation() {
   };
 }
 
-function roleForPositionLabel(label) {
-  return FORMATION_POSITION_LIBRARY.find((p) => p.label === label)?.role || "Centrocampista";
+function roleForPositionLabel(label, library) {
+  return (library || FORMATION_POSITION_LIBRARY).find((p) => p.label === label)?.role || "Centrocampista";
 }
 
 // Campo cliccabile per posizionare in sequenza le posizioni del nuovo modulo.
@@ -7209,6 +7406,8 @@ function formationToWizardForm(f) {
 }
 
 function NewFormationWizard({ onCancel, onSave, initial }) {
+  const config = useConfig();
+  const formationRolesLibrary = config.formationRoles && config.formationRoles.length ? config.formationRoles : FORMATION_POSITION_LIBRARY;
   const isEditing = !!initial;
   const [step, setStep] = useState(1);
   const [form, setForm] = useState(() => (initial ? formationToWizardForm(initial) : emptyNewFormation()));
@@ -7261,7 +7460,7 @@ function NewFormationWizard({ onCancel, onSave, initial }) {
   function placeNext(x, y) {
     if (placed.length >= requiredCount) return;
     const label = form.positionLabels[placed.length];
-    setPlaced([...placed, { id: uid("pos"), label, role: roleForPositionLabel(label), x, y }]);
+    setPlaced([...placed, { id: uid("pos"), label, role: roleForPositionLabel(label, formationRolesLibrary), x, y }]);
   }
 
   function undoLastPlacement() {
@@ -7371,7 +7570,7 @@ function NewFormationWizard({ onCancel, onSave, initial }) {
             onChange={(e) => updatePositionLabel(idx, e.target.value)}
           >
             <option value="">Posizione {idx + 1}...</option>
-            {FORMATION_POSITION_LIBRARY.map((p) => (
+            {formationRolesLibrary.map((p) => (
               <option key={p.label} value={p.label}>{p.label} · {p.description}</option>
             ))}
           </select>
@@ -8352,6 +8551,7 @@ const CONFIG_TABLES = [
   { key: "exerciseTypes", label: "Tipologia Esercizi", hint: "" },
   { key: "categories", label: "Categorie", hint: "Fasce d'età/categoria del club, usate per taggare gli esercizi" },
   { key: "dossierCategories", label: "Categorie Dossier", hint: "Usate per organizzare i documenti nel Dossier (es. Metodologia, Notizie)" },
+  { key: "formationRoles", label: "Ruoli Moduli", hint: "Sigle di posizione (es. DC, CM, ALA) usate per creare e modificare i moduli tattici", isFormationRoles: true },
 ];
 
 function ConfigurationsSection({ library, updateLibrary, showToast }) {
@@ -8388,8 +8588,131 @@ function ConfigurationsSection({ library, updateLibrary, showToast }) {
       <Card className="p-5">
         <p className="text-sm font-bold text-slate-100 mb-1">{meta.label}</p>
         {meta.hint && <p className="text-xs text-slate-500 mb-4">{meta.hint}</p>}
-        <EditableListManager items={items} onChange={setItems} showToast={showToast} />
+        {meta.isFormationRoles ? (
+          <FormationRolesManager items={items} onChange={setItems} showToast={showToast} />
+        ) : (
+          <EditableListManager items={items} onChange={setItems} showToast={showToast} />
+        )}
       </Card>
+    </div>
+  );
+}
+
+// Gestione CRUD dei "Ruoli Moduli": sigle di posizione (es. DC, CM) usate nel
+// wizard di creazione/modifica dei moduli tattici, ciascuna con una breve
+// descrizione e il ruolo principale (Portiere/Difensore/Centrocampista/Attaccante)
+// a cui viene associata per il conteggio e i filtri.
+function FormationRolesManager({ items, onChange, showToast }) {
+  const [form, setForm] = useState({ label: "", description: "", role: ROLES[2] });
+  const [editingIdx, setEditingIdx] = useState(null);
+  const [editForm, setEditForm] = useState(null);
+  const [confirmDeleteIdx, setConfirmDeleteIdx] = useState(null);
+
+  function addItem() {
+    const label = form.label.trim().toUpperCase();
+    if (!label) return;
+    if (items.some((i) => i.label.toUpperCase() === label)) {
+      showToast?.("Sigla già presente nell'elenco", "error");
+      return;
+    }
+    onChange([...items, { label, description: form.description.trim(), role: form.role }]);
+    setForm({ label: "", description: "", role: ROLES[2] });
+  }
+
+  function startEdit(idx) {
+    setEditingIdx(idx);
+    setEditForm({ ...items[idx] });
+  }
+
+  function saveEdit(idx) {
+    const label = (editForm.label || "").trim().toUpperCase();
+    if (!label) return;
+    const updated = [...items];
+    updated[idx] = { ...editForm, label };
+    onChange(updated);
+    setEditingIdx(null);
+    setEditForm(null);
+  }
+
+  function deleteItem(idx) {
+    onChange(items.filter((_, i) => i !== idx));
+    setConfirmDeleteIdx(null);
+  }
+
+  return (
+    <div>
+      <div className="grid grid-cols-[80px_1fr_140px_auto] gap-2 mb-4 items-center">
+        <input
+          className={inputClass}
+          value={form.label}
+          onChange={(e) => setForm({ ...form, label: e.target.value })}
+          placeholder="Sigla"
+          maxLength={6}
+        />
+        <input
+          className={inputClass}
+          value={form.description}
+          onChange={(e) => setForm({ ...form, description: e.target.value })}
+          placeholder="Descrizione (es. Difensore Centrale)"
+        />
+        <select className={inputClass} value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+          {ROLES.map((r) => (
+            <option key={r} value={r}>{r}</option>
+          ))}
+        </select>
+        <Button onClick={addItem}>
+          <Plus className="w-4 h-4" /> Aggiungi
+        </Button>
+      </div>
+
+      <div className="space-y-1.5">
+        {items.length === 0 && <p className="text-xs text-slate-500">Nessun ruolo modulo configurato.</p>}
+        {items.map((it, idx) => (
+          <div key={idx} className="flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2">
+            {editingIdx === idx ? (
+              <>
+                <input
+                  className={`${inputClass} w-20`}
+                  value={editForm.label}
+                  onChange={(e) => setEditForm({ ...editForm, label: e.target.value })}
+                  maxLength={6}
+                />
+                <input
+                  className={`${inputClass} flex-1`}
+                  value={editForm.description}
+                  onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                />
+                <select
+                  className={`${inputClass} w-36`}
+                  value={editForm.role}
+                  onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
+                >
+                  {ROLES.map((r) => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                </select>
+                <button onClick={() => saveEdit(idx)} className="text-emerald-400 px-1"><Save className="w-4 h-4" /></button>
+                <button onClick={() => { setEditingIdx(null); setEditForm(null); }} className="text-slate-500 px-1"><X className="w-4 h-4" /></button>
+              </>
+            ) : (
+              <>
+                <span className="w-20 font-bold text-slate-100 text-sm">{it.label}</span>
+                <span className="flex-1 text-sm text-slate-400 truncate">{it.description}</span>
+                <Badge className={ROLE_COLORS[it.role]}>{it.role}</Badge>
+                <button onClick={() => startEdit(idx)} className="text-slate-400 px-1"><Edit2 className="w-4 h-4" /></button>
+                {confirmDeleteIdx === idx ? (
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => deleteItem(idx)} className="text-rose-400 text-xs font-semibold px-1.5">Conferma</button>
+                    <button onClick={() => setConfirmDeleteIdx(null)} className="text-slate-500 px-1"><X className="w-4 h-4" /></button>
+                  </div>
+                ) : (
+                  <button onClick={() => setConfirmDeleteIdx(idx)} className="text-rose-400 px-1"><Trash2 className="w-4 h-4" /></button>
+                )}
+              </>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -8958,15 +9281,14 @@ function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, l
     const wb = new ExcelJS.Workbook();
 
     // --- Foglio 1: Riepilogo ---
-    const summaryHeaders = ["Data", "Ora", "Focus tecnico", "Presenti", "Assenti", "Giustificati", "Infortunati"];
+    const summaryHeaders = ["Data", "Ora", "Focus tecnico", "Presenti", "Assenti", "Infortunati"];
     const summaryRows = trainings.map((t) => {
       const linkedFocus = focusTecnici.find((f) => f.id === t.focusTecnicoId);
       const values = players.map((p) => t.attendance?.[p.id] || "Non registrato");
       return [
         t.date, t.time, linkedFocus?.title || t.focus || "",
         values.filter((v) => v === "Presente").length,
-        values.filter((v) => v === "Assente").length,
-        values.filter((v) => v === "Giustificato").length,
+        values.filter((v) => v === "Assente" || v === "Giustificato").length,
         values.filter((v) => v === "Infortunato").length,
       ];
     });
@@ -8975,9 +9297,9 @@ function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, l
     xlsStyleSubtitleRow(ws1, 2, summaryHeaders.length, activeSeason.name);
     xlsStyleGroupRow(ws1, 3, [{ label: "ALLENAMENTI", span: summaryHeaders.length }]);
     xlsStyleHeaderRow(ws1, 4, summaryHeaders);
-    xlsWriteDataRows(ws1, 5, summaryRows, { numberCols: new Set([4, 5, 6, 7]) });
+    xlsWriteDataRows(ws1, 5, summaryRows, { numberCols: new Set([4, 5, 6]) });
     xlsFinalize(ws1, 4);
-    xlsSetColWidths(ws1, [12, 8, 24, 11, 11, 13, 13]);
+    xlsSetColWidths(ws1, [12, 8, 24, 11, 11, 13]);
 
     // --- Foglio 2: Dettaglio Presenze ---
     const detailHeaders = ["Data", "Ora", "Focus tecnico", "Durata (min)", "Giocatore", "Stato"];
@@ -9001,19 +9323,19 @@ function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, l
     xlsSetColWidths(ws2, [12, 8, 24, 14, 22, 16]);
 
     // --- Foglio 3: Presenze per Giocatore ---
-    // "Assenze" è il totale (assenze + giustificate + infortuni); il dettaglio
-    // delle tre componenti è in coda, dopo una colonna vuota di respiro.
+    // "Assenze" è il totale (assenze + infortuni); il dettaglio delle due
+    // componenti è in coda, dopo una colonna vuota di respiro.
     const totalTrainings = trainings.length;
     const headers3 = [
       "Giocatore", "Allenamenti Disponibili", "Presenze", "Assenze", "% Presenza",
-      "", "Assenze", "Assenze Giustificate", "Infortuni",
+      "", "Assenze", "Infortuni",
     ];
     const rows3 = players.map((p) => {
       const s = computePlayerStats(p.id, trainings, matches);
-      const assenzeTotali = s.assenze + s.giustificati + s.infortuni;
+      const assenzeTotali = s.assenze + s.infortuni;
       const presenze = s.presenze;
       const pct = totalTrainings ? `${Math.round((presenze / totalTrainings) * 100)}%` : "-";
-      return [p.name, totalTrainings, presenze, assenzeTotali, pct, "", s.assenze, s.giustificati, s.infortuni];
+      return [p.name, totalTrainings, presenze, assenzeTotali, pct, "", s.assenze, s.infortuni];
     });
     const ws3 = wb.addWorksheet("Presenze per Giocatore");
     xlsStyleTitleRow(ws3, 1, headers3.length, `PRESENZE PER GIOCATORE — ${activeSeason.teamName || ""}`);
@@ -9021,7 +9343,7 @@ function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, l
     xlsStyleGroupRow(ws3, 3, [
       { label: "GIOCATORE", span: 5 },
       { label: "", span: 1 },
-      { label: "DETTAGLIO ASSENZE", span: 3 },
+      { label: "DETTAGLIO ASSENZE", span: 2 },
     ]);
     xlsStyleHeaderRow(ws3, 4, headers3, XLS_EMERALD_DARK);
     // la colonna vuota (spacer) resta bianca, senza bordi
@@ -9029,13 +9351,13 @@ function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, l
     ws3.getCell(3, 6).border = {};
     ws3.getCell(4, 6).fill = null;
     ws3.getCell(4, 6).border = {};
-    const lastRow3 = xlsWriteDataRows(ws3, 5, rows3, { numberCols: new Set([2, 3, 4, 5, 7, 8, 9]) });
+    const lastRow3 = xlsWriteDataRows(ws3, 5, rows3, { numberCols: new Set([2, 3, 4, 5, 7, 8]) });
     for (let r = 5; r <= lastRow3; r++) {
       ws3.getCell(r, 6).fill = null;
       ws3.getCell(r, 6).border = {};
     }
     xlsFinalize(ws3, 4);
-    xlsSetColWidths(ws3, [22, 20, 12, 12, 12, 3, 12, 20, 12]);
+    xlsSetColWidths(ws3, [22, 20, 12, 12, 12, 3, 12, 12]);
 
     // --- Foglio 4: Convocazioni per Giocatore ---
     const headers4 = [
@@ -9127,7 +9449,7 @@ function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, l
     if (players.length === 0) return showToast("Nessun giocatore da esportare", "error");
 
     const giocatoreH = ["Numero", "Nome", "Ruolo"];
-    const allenamentiH = ["Allenamenti", "Presenze All.", "Assenze All.", "Assente Giust.", "Infortunato", "Assenze Tot.", "% Presenza"];
+    const allenamentiH = ["Allenamenti", "Presenze All.", "Assenze All.", "Infortunato", "Assenze Tot.", "% Presenza"];
     const partiteH = ["Partite", "Convocazioni", "Reti", "Assist", "Amm.", "Esp.", "% Convocazioni", "Media Reti", "Media Assist"];
     const headers = [...giocatoreH, ...allenamentiH, ...partiteH];
     const totAllenamenti = trainings.length;
@@ -9138,14 +9460,14 @@ function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, l
       .sort((a, b) => (a.number ?? 999) - (b.number ?? 999))
       .map((p) => {
         const s = computePlayerStats(p.id, trainings, matches);
-        const assenzeTot = s.assenze + s.giustificati + s.infortuni;
+        const assenzeTot = s.assenze + s.infortuni;
         const pctPresenza = totAllenamenti ? `${Math.round((s.presenze / totAllenamenti) * 100)}%` : "-";
         const pctConv = totPartite ? `${Math.round((s.convocazioni / totPartite) * 100)}%` : "-";
         const mediaReti = s.convocazioni ? Math.round((s.reti / s.convocazioni) * 100) / 100 : 0;
         const mediaAssist = s.convocazioni ? Math.round((s.assist / s.convocazioni) * 100) / 100 : 0;
         return [
           p.number ?? "", p.name, p.role,
-          totAllenamenti, s.presenze, s.assenze, s.giustificati, s.infortuni, assenzeTot, pctPresenza,
+          totAllenamenti, s.presenze, s.assenze, s.infortuni, assenzeTot, pctPresenza,
           totPartite, s.convocazioni, s.reti, s.assist, s.ammonizioni, s.espulsioni, pctConv, mediaReti, mediaAssist,
         ];
       });
@@ -9163,7 +9485,7 @@ function ExportSection({ seasons, activeSeason, setSeasons, setActiveSeasonId, l
     const numberCols = new Set([1, ...range(giocatoreH.length + 1, headers.length)]);
     xlsWriteDataRows(ws, 5, rows, { numberCols });
     xlsFinalize(ws, 4);
-    xlsSetColWidths(ws, [6, 20, 16, 13, 12, 12, 12, 12, 12, 11, 12, 16, 8, 8, 10, 10, 17, 11, 12]);
+    xlsSetColWidths(ws, [6, 20, 16, 13, 12, 12, 12, 12, 11, 12, 16, 8, 8, 10, 10, 17, 11, 12]);
 
     await downloadWorkbook(wb, `statistiche-${activeSeason.name}.xlsx`);
     showToast("Excel statistiche esportato");
