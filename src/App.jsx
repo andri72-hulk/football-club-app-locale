@@ -4251,7 +4251,48 @@ function StatBar({ label, value, editable, onChange }) {
 // (lunedì-domenica) e per ciascuna mostra, per ogni giocatore, il numero di
 // assenze (Assente o il legacy Giustificato) registrate in quella settimana —
 // elencando solo chi ha almeno un'assenza, ordinati per numero decrescente.
-function WeeklyAbsencesSection({ trainings, players }) {
+// Testo semplice "Settimana NN — allenamenti: ... \n Nome: N assenze" condiviso
+// sia dall'export PDF (incapsulato in HTML) sia dal pulsante Condividi (testo puro).
+function weeklyAbsencesText(w, absencesByPlayer) {
+  const header = `Settimana ${w.week} (${w.year}) — Allenamenti: ${w.trainings.map((t) => formatDateShort(t.date)).join(", ")}`;
+  if (absencesByPlayer.length === 0) return `${header}\nNessuna assenza questa settimana — presenza piena.`;
+  const lines = absencesByPlayer.map(({ player, count }) => `${player.name}: ${count} ${count === 1 ? "assenza" : "assenze"}`);
+  return [header, ...lines].join("\n");
+}
+
+async function shareWeeklyAbsences(w, absencesByPlayer, showToast) {
+  const text = weeklyAbsencesText(w, absencesByPlayer);
+  const title = `Assenze — Settimana ${w.week}`;
+  try {
+    if (typeof navigator !== "undefined" && navigator.share) {
+      await navigator.share({ title, text });
+      return;
+    }
+  } catch (e) {
+    if (e?.name === "AbortError") return; // utente ha annullato: nessun errore da mostrare
+  }
+  openWhatsAppFallback(text);
+  showToast?.("Condivisione diretta non disponibile: aperto WhatsApp con il messaggio pronto.", "success");
+}
+
+function downloadWeeklyAbsencesPdf(w, absencesByPlayer) {
+  let body = `<h1>Assenze — Settimana ${w.week} (${w.year})</h1>`;
+  body += `<p><strong>Allenamenti:</strong> ${w.trainings.map((t) => formatDateShort(t.date)).join(" · ")}</p>`;
+  if (absencesByPlayer.length === 0) {
+    body += `<p>Nessuna assenza questa settimana — presenza piena.</p>`;
+  } else {
+    body += `<table><tr><th>Giocatore</th><th>Assenze</th></tr>`;
+    absencesByPlayer.forEach(({ player, count }) => {
+      body += `<tr><td>${player.name}</td><td>${count}</td></tr>`;
+    });
+    body += `</table>`;
+  }
+  downloadPrintableHTML(`assenze-settimana-${w.week}-${w.year}.html`, `Assenze Settimana ${w.week}`, body);
+}
+
+function WeeklyAbsencesSection({ trainings, players, showToast }) {
+  const [expandedKey, setExpandedKey] = useState(null);
+
   if (trainings.length === 0) {
     return <EmptyState icon={Calendar} text="Nessun allenamento registrato." />;
   }
@@ -4261,7 +4302,7 @@ function WeeklyAbsencesSection({ trainings, players }) {
     if (!t.date) return;
     const { year, week } = isoWeekInfo(t.date);
     const key = `${year}-W${String(week).padStart(2, "0")}`;
-    if (!weeksMap.has(key)) weeksMap.set(key, { year, week, trainings: [] });
+    if (!weeksMap.has(key)) weeksMap.set(key, { key, year, week, trainings: [] });
     weeksMap.get(key).trainings.push(t);
   });
 
@@ -4269,7 +4310,7 @@ function WeeklyAbsencesSection({ trainings, players }) {
   weeks.forEach((w) => w.trainings.sort((a, b) => new Date(a.date) - new Date(b.date)));
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-2.5">
       {weeks.map((w) => {
         const absencesByPlayer = players
           .map((p) => {
@@ -4281,28 +4322,55 @@ function WeeklyAbsencesSection({ trainings, players }) {
           .filter((e) => e.count > 0)
           .sort((a, b) => b.count - a.count || a.player.name.localeCompare(b.player.name, "it"));
 
+        const isExpanded = expandedKey === w.key;
+
         return (
-          <Card key={`${w.year}-${w.week}`} className="p-4">
-            <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
-              <p className="text-sm font-bold text-slate-100">
-                Settimana {w.week} <span className="text-slate-500 font-normal">· {w.year}</span>
-              </p>
-              <p className="text-xs text-slate-500">
-                Allenamenti: {w.trainings.map((t) => formatDateShort(t.date)).join(" · ")}
-              </p>
-            </div>
-            {absencesByPlayer.length === 0 ? (
-              <p className="text-xs text-slate-500">Nessuna assenza questa settimana — presenza piena.</p>
-            ) : (
-              <div className="space-y-1">
-                {absencesByPlayer.map(({ player, count }) => (
-                  <div key={player.id} className="flex items-center justify-between rounded-lg border border-white/5 px-3 py-1.5">
-                    <span className="text-sm text-slate-200">{player.name}</span>
-                    <Badge className="bg-rose-500/15 text-rose-400 border-rose-500/30">
-                      {count} {count === 1 ? "assenza" : "assenze"}
-                    </Badge>
+          <Card key={w.key} className="overflow-hidden">
+            <button
+              onClick={() => setExpandedKey(isExpanded ? null : w.key)}
+              className="w-full text-left p-4 flex items-center justify-between gap-3 flex-wrap hover:bg-white/5 transition-colors"
+            >
+              <div>
+                <p className="text-sm font-bold text-slate-100">
+                  Settimana {w.week} <span className="text-slate-500 font-normal">· {w.year}</span>
+                </p>
+                <p className="text-xs text-slate-500">
+                  Allenamenti: {w.trainings.map((t) => formatDateShort(t.date)).join(" · ")}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {absencesByPlayer.length > 0 && (
+                  <Badge className="bg-rose-500/15 text-rose-400 border-rose-500/30">
+                    {absencesByPlayer.length} {absencesByPlayer.length === 1 ? "assente" : "assenti"}
+                  </Badge>
+                )}
+                {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
+              </div>
+            </button>
+            {isExpanded && (
+              <div className="px-4 pb-4">
+                <div className="flex gap-2 mb-3">
+                  <Button variant="secondary" onClick={() => downloadWeeklyAbsencesPdf(w, absencesByPlayer)}>
+                    <FileText className="w-4 h-4" /> Esporta PDF
+                  </Button>
+                  <Button variant="secondary" onClick={() => shareWeeklyAbsences(w, absencesByPlayer, showToast)}>
+                    <Share2 className="w-4 h-4" /> Condividi
+                  </Button>
+                </div>
+                {absencesByPlayer.length === 0 ? (
+                  <p className="text-xs text-slate-500">Nessuna assenza questa settimana — presenza piena.</p>
+                ) : (
+                  <div className="space-y-1">
+                    {absencesByPlayer.map(({ player, count }) => (
+                      <div key={player.id} className="flex items-center justify-between rounded-lg border border-white/5 px-3 py-1.5">
+                        <span className="text-sm text-slate-200">{player.name}</span>
+                        <Badge className="bg-rose-500/15 text-rose-400 border-rose-500/30">
+                          {count} {count === 1 ? "assenza" : "assenze"}
+                        </Badge>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
               </div>
             )}
           </Card>
@@ -4481,7 +4549,7 @@ function TrainingsSection({ season, updateSeason, library, updateLibrary, showTo
       </div>
 
       {subTab === "assenze" ? (
-        <WeeklyAbsencesSection trainings={trainings} players={players} />
+        <WeeklyAbsencesSection trainings={trainings} players={players} showToast={showToast} />
       ) : subTab === "playbook" ? (
         <PlayBookSection
           exercises={library.exercises || []}
