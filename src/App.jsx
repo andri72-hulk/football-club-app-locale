@@ -1295,6 +1295,24 @@ function formatDateTime(iso) {
   return `${d.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" })} alle ${d.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" })}`;
 }
 
+// Numero di settimana ISO 8601 (lunedì-domenica, settimana 1 = quella che contiene
+// il primo giovedì dell'anno) per una data "YYYY-MM-DD". Restituisce { year, week },
+// dove "year" è l'anno ISO della settimana (può differire dall'anno solare a cavallo
+// di capodanno).
+function isoWeekInfo(iso) {
+  const d = new Date(iso + "T00:00:00");
+  if (isNaN(d.getTime())) return { year: 0, week: 0 };
+  // Porta la data al giovedì della sua settimana (lunedì=1 ... domenica=7)
+  const day = (d.getDay() + 6) % 7; // 0 = lunedì
+  d.setDate(d.getDate() - day + 3);
+  const isoYear = d.getFullYear();
+  const firstThursday = new Date(isoYear, 0, 4);
+  const firstThursdayDay = (firstThursday.getDay() + 6) % 7;
+  firstThursday.setDate(firstThursday.getDate() - firstThursdayDay + 3);
+  const week = 1 + Math.round((d - firstThursday) / (7 * 24 * 60 * 60 * 1000));
+  return { year: isoYear, week };
+}
+
 // Sottrae un numero di minuti a un orario "HH:MM", per calcolare l'orario di
 // ritrovo al campo a partire dall'orario di inizio partita.
 function subtractMinutesFromTime(timeStr, minutes) {
@@ -4229,6 +4247,71 @@ function StatBar({ label, value, editable, onChange }) {
    SEZIONE ALLENAMENTI
    ============================================================ */
 
+// Report "Assenze per settimana": raggruppa gli allenamenti per settimana ISO
+// (lunedì-domenica) e per ciascuna mostra, per ogni giocatore, il numero di
+// assenze (Assente o il legacy Giustificato) registrate in quella settimana —
+// elencando solo chi ha almeno un'assenza, ordinati per numero decrescente.
+function WeeklyAbsencesSection({ trainings, players }) {
+  if (trainings.length === 0) {
+    return <EmptyState icon={Calendar} text="Nessun allenamento registrato." />;
+  }
+
+  const weeksMap = new Map();
+  trainings.forEach((t) => {
+    if (!t.date) return;
+    const { year, week } = isoWeekInfo(t.date);
+    const key = `${year}-W${String(week).padStart(2, "0")}`;
+    if (!weeksMap.has(key)) weeksMap.set(key, { year, week, trainings: [] });
+    weeksMap.get(key).trainings.push(t);
+  });
+
+  const weeks = [...weeksMap.values()].sort((a, b) => (b.year - a.year) || (b.week - a.week));
+  weeks.forEach((w) => w.trainings.sort((a, b) => new Date(a.date) - new Date(b.date)));
+
+  return (
+    <div className="space-y-5">
+      {weeks.map((w) => {
+        const absencesByPlayer = players
+          .map((p) => {
+            const count = w.trainings.filter(
+              (t) => t.attendance?.[p.id] === "Assente" || t.attendance?.[p.id] === "Giustificato"
+            ).length;
+            return { player: p, count };
+          })
+          .filter((e) => e.count > 0)
+          .sort((a, b) => b.count - a.count || a.player.name.localeCompare(b.player.name, "it"));
+
+        return (
+          <Card key={`${w.year}-${w.week}`} className="p-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+              <p className="text-sm font-bold text-slate-100">
+                Settimana {w.week} <span className="text-slate-500 font-normal">· {w.year}</span>
+              </p>
+              <p className="text-xs text-slate-500">
+                Allenamenti: {w.trainings.map((t) => formatDateShort(t.date)).join(" · ")}
+              </p>
+            </div>
+            {absencesByPlayer.length === 0 ? (
+              <p className="text-xs text-slate-500">Nessuna assenza questa settimana — presenza piena.</p>
+            ) : (
+              <div className="space-y-1">
+                {absencesByPlayer.map(({ player, count }) => (
+                  <div key={player.id} className="flex items-center justify-between rounded-lg border border-white/5 px-3 py-1.5">
+                    <span className="text-sm text-slate-200">{player.name}</span>
+                    <Badge className="bg-rose-500/15 text-rose-400 border-rose-500/30">
+                      {count} {count === 1 ? "assenza" : "assenze"}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
 function TrainingsSection({ season, updateSeason, library, updateLibrary, showToast }) {
   const trainings = [...(season.trainings || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
   const players = season.players || [];
@@ -4380,6 +4463,7 @@ function TrainingsSection({ season, updateSeason, library, updateLibrary, showTo
       <div className="flex gap-2 mb-5 flex-wrap">
         {[
           { id: "sessioni", label: "Sessioni" },
+          { id: "assenze", label: "Assenze" },
           { id: "focus", label: "Focus Tecnici" },
           { id: "esercizi", label: "Esercizi" },
           { id: "playbook", label: "PlayBook" },
@@ -4396,7 +4480,9 @@ function TrainingsSection({ season, updateSeason, library, updateLibrary, showTo
         ))}
       </div>
 
-      {subTab === "playbook" ? (
+      {subTab === "assenze" ? (
+        <WeeklyAbsencesSection trainings={trainings} players={players} />
+      ) : subTab === "playbook" ? (
         <PlayBookSection
           exercises={library.exercises || []}
           focusTecnici={focusTecnici}
