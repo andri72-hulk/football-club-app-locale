@@ -6286,7 +6286,7 @@ function TournamentOutcomeForm({ info, onSave }) {
   return (
     <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 mb-5">
       <p className="text-xs font-semibold text-amber-400 uppercase tracking-wide mb-1">🏆 Esito torneo — {info.name}</p>
-      <p className="text-[11px] text-slate-500 mb-3">Ultima partita disputata del torneo: inserisci il risultato finale.</p>
+      <p className="text-[11px] text-slate-500 mb-3">Questa è l'ultima partita del torneo (la più lontana in calendario): inserisci il risultato finale.</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Field label="Nostro piazzamento">
           <input className={inputClass} value={placement} onChange={(e) => setPlacement(e.target.value)} placeholder="Es. 3° posto" />
@@ -6562,7 +6562,7 @@ function MatchesSection({ season, updateSeason, showToast }) {
                         </div>
                       </div>
                       {!info.winner && !info.placement && (
-                        <p className="text-[11px] text-slate-500 mb-3">Inserisci piazzamento e vincitrice aprendo l'ultima partita disputata del torneo.</p>
+                        <p className="text-[11px] text-slate-500 mb-3">Inserisci piazzamento e vincitrice aprendo l'ultima partita del torneo in ordine di data e ora, dopo averla disputata.</p>
                       )}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
@@ -6607,8 +6607,9 @@ function MatchesSection({ season, updateSeason, showToast }) {
               const cur = matches.find((m) => m.id === selected.id) || selected;
               const n = (cur.tournamentName || "").trim();
               if (cur.matchType !== "Torneo" || !n || cur.status !== "Disputata") return null;
-              const played = matches.filter((m) => m.matchType === "Torneo" && m.status === "Disputata" && tKey(m.tournamentName) === tKey(n));
-              const last = [...played].sort((a, b) => (`${b.date} ${b.time || ""}`).localeCompare(`${a.date} ${a.time || ""}`))[0];
+              // Ultima = la più lontana per data e ora tra TUTTE le partite del torneo (anche programmate)
+              const all = matches.filter((m) => m.matchType === "Torneo" && tKey(m.tournamentName) === tKey(n));
+              const last = [...all].sort((a, b) => (`${b.date} ${b.time || ""}`).localeCompare(`${a.date} ${a.time || ""}`))[0];
               return { name: n, isLast: last?.id === cur.id, data: tournaments[tKey(n)] || {} };
             })()}
             onSaveTournament={saveTournamentOutcome}
