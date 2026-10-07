@@ -3550,18 +3550,28 @@ function PlayersSection({ season, updateSeason, showToast, view, setView, jumpTo
         <EmptyState icon={Users} text="Nessun giocatore trovato. Aggiungi il primo giocatore alla rosa." />
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "16px" }}>
-          {filtered.map((p) => (
+          {filtered.map((p) => {
+            const st = computePlayerStats(p.id, trainings, matches);
+            return (
             <Card
               key={p.id}
               className="p-3 sm:p-4 hover:border-emerald-500/40 transition-colors h-full flex flex-col items-center text-center relative"
               style={{ backgroundColor: ROLE_CARD_BG[p.role] }}
             >
+              {p.birthDate && (
+                <span
+                  className="absolute top-2 left-2 rounded-full border border-white/15 bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-slate-300"
+                  title="Data di nascita"
+                >
+                  {new Date(p.birthDate).toLocaleDateString("it-IT", { day: "2-digit", month: "2-digit", year: "numeric" })}
+                </span>
+              )}
               <PlayerRatingBadge
                 rating={playerOverallRating(p)}
                 className="absolute top-2 right-2"
                 title={`Media di tutti i voti di ${p.name}`}
               />
-              <button onClick={() => setSelectedPlayer(p)} className="flex flex-col items-center">
+              <button onClick={() => setSelectedPlayer(p)} className="flex flex-col items-center mt-3">
                 <div className="relative mb-2 sm:mb-3">
                   <img src={playerAvatar(p)} alt={p.name} className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-slate-800 border-2 border-white/10 object-cover" />
                   <span className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-emerald-500 text-slate-950 text-[11px] font-extrabold flex items-center justify-center border-2 border-slate-900">
@@ -3586,15 +3596,6 @@ function PlayersSection({ season, updateSeason, showToast, view, setView, jumpTo
                     className="border-emerald-500/30 text-emerald-400 bg-emerald-500/10"
                   />
                 )}
-              </div>
-
-              <div className="mt-1.5 flex items-center gap-1 flex-wrap justify-center">
-                <InlinePlayerSelect
-                  value={p.role2 || ""}
-                  options={[{ value: "", label: "Alt: —" }, ...config.roles.filter((r) => r !== p.role).map((r) => ({ value: r, label: `Alt: ${r}` }))]}
-                  onChange={(v) => updatePlayer(p.id, { role2: v || null })}
-                  className="border-white/20 text-slate-200 bg-white/5"
-                />
                 <InlinePlayerSelect
                   value={p.medicalStatus}
                   options={config.medicalStatuses}
@@ -3602,8 +3603,24 @@ function PlayersSection({ season, updateSeason, showToast, view, setView, jumpTo
                   className={MEDICAL_COLORS[p.medicalStatus] || NEUTRAL_BADGE}
                 />
               </div>
+
+              <div className="mt-2.5 w-full grid grid-cols-3 gap-1 border-t border-white/10 pt-2">
+                <div>
+                  <p className="text-sm font-bold text-emerald-400 leading-none">{st.presenze}</p>
+                  <p className="text-[9px] uppercase tracking-wide text-slate-500 mt-1 leading-tight">Presenze<br />All.</p>
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-rose-400 leading-none">{st.assenze}</p>
+                  <p className="text-[9px] uppercase tracking-wide text-slate-500 mt-1 leading-tight">Assenze<br />All.</p>
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-sky-400 leading-none">{st.convCampionato}</p>
+                  <p className="text-[9px] uppercase tracking-wide text-slate-500 mt-1 leading-tight">Conv.<br />Campion.</p>
+                </div>
+              </div>
             </Card>
-          ))}
+            );
+          })}
         </div>
       )}
 
