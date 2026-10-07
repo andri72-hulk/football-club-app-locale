@@ -6276,6 +6276,30 @@ function TrainingDetail({ training, players, focusTecnici, onUpdate, onDelete })
    SEZIONE PARTITE
    ============================================================ */
 
+function tKey(name) {
+  return (name || "").trim().toLowerCase();
+}
+
+function TournamentOutcomeForm({ info, onSave }) {
+  const [placement, setPlacement] = useState(info.data?.placement || "");
+  const [winner, setWinner] = useState(info.data?.winner || "");
+  return (
+    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 mb-5">
+      <p className="text-xs font-semibold text-amber-400 uppercase tracking-wide mb-1">🏆 Esito torneo — {info.name}</p>
+      <p className="text-[11px] text-slate-500 mb-3">Ultima partita disputata del torneo: inserisci il risultato finale.</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Field label="Nostro piazzamento">
+          <input className={inputClass} value={placement} onChange={(e) => setPlacement(e.target.value)} placeholder="Es. 3° posto" />
+        </Field>
+        <Field label="Squadra vincitrice">
+          <input className={inputClass} value={winner} onChange={(e) => setWinner(e.target.value)} placeholder="Es. Sampdoria" />
+        </Field>
+      </div>
+      <Button onClick={() => onSave({ placement: placement.trim(), winner: winner.trim() })}>Salva esito torneo</Button>
+    </div>
+  );
+}
+
 function MatchesSection({ season, updateSeason, showToast }) {
   const matches = [...(season.matches || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
   const players = season.players || [];
@@ -6284,10 +6308,45 @@ function MatchesSection({ season, updateSeason, showToast }) {
   const [typeFilter, setTypeFilter] = useState("Tutte");
   const [showAdd, setShowAdd] = useState(false);
   const [selected, setSelected] = useState(null);
+  const [openTournaments, setOpenTournaments] = useState({});
 
   const filtered = matches
     .filter((m) => m.status === filter)
     .filter((m) => filter !== "Disputata" || typeFilter === "Tutte" || m.matchType === typeFilter);
+
+  const tournaments = season.tournaments || {};
+  // Nomi dei tornei tra le partite ancora da disputare (per il menu a tendina)
+  const tournamentNames = [];
+  matches.forEach((m) => {
+    const n = (m.tournamentName || "").trim();
+    if (m.status === "Programmata" && m.matchType === "Torneo" && n && !tournamentNames.some((x) => tKey(x) === tKey(n))) tournamentNames.push(n);
+  });
+
+  // Elenco disputate: i tornei con lo stesso nome vengono raccolti in un unico gruppo
+  const listItems = [];
+  if (filter === "Disputata") {
+    const groups = {};
+    filtered.forEach((m) => {
+      const n = (m.tournamentName || "").trim();
+      if (m.matchType === "Torneo" && n) {
+        const k = tKey(n);
+        if (!groups[k]) {
+          groups[k] = { type: "tournament", key: k, name: n, matches: [] };
+          listItems.push(groups[k]);
+        }
+        groups[k].matches.push(m);
+      } else {
+        listItems.push({ type: "match", match: m });
+      }
+    });
+  } else {
+    filtered.forEach((m) => listItems.push({ type: "match", match: m }));
+  }
+
+  function saveTournamentOutcome(name, data) {
+    updateSeason((s) => ({ tournaments: { ...(s.tournaments || {}), [tKey(name)]: { ...((s.tournaments || {})[tKey(name)] || {}), ...data } } }));
+    showToast("Esito torneo salvato");
+  }
 
   function addMatch(data) {
     updateSeason((s) => ({
@@ -6321,6 +6380,54 @@ function MatchesSection({ season, updateSeason, showToast }) {
     setSelected(null);
   }
 
+  function renderMatchCard(m) {
+    const TypeIcon = MATCH_TYPE_ICONS[m.matchType] || Trophy;
+    return (
+      <button key={m.id} onClick={() => setSelected(m)} className="w-full text-left">
+        <Card
+          className="p-4 hover:border-emerald-500/40 transition-colors"
+          style={{ borderLeft: `4px solid ${MATCH_TYPE_BORDER[m.matchType] || "transparent"}` }}
+        >
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-3">
+              <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${m.homeAway === "Casa" ? "bg-emerald-500/15" : "bg-amber-500/15"}`}>
+                <Flag className={`w-5 h-5 ${m.homeAway === "Casa" ? "text-emerald-400" : "text-amber-400"}`} />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-sm font-bold text-slate-100">
+                    {season.teamName || "Squadra"} <span className="text-slate-500">vs</span> {m.opponent}
+                  </p>
+                  {m.matchType && (
+                    <Badge className={MATCH_TYPE_STYLES[m.matchType]}>
+                      <TypeIcon className="w-3 h-3" /> {m.matchType}
+                    </Badge>
+                  )}
+                  {m.coachNotes && (
+                    <span title="Presenti annotazioni del mister">
+                      <StickyNote className="w-3.5 h-3.5 text-amber-400" />
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500">
+                  {formatDate(m.date)} · {m.time} · {m.homeAway}
+                  {m.matchType === "Torneo" && m.tournamentName ? ` · ${m.tournamentName}` : ""}
+                </p>
+              </div>
+            </div>
+            {m.status === "Disputata" && m.result ? (
+              <div className="text-lg font-extrabold text-slate-100">
+                {m.result.golFor} <span className="text-slate-600">-</span> {m.result.golAgainst}
+              </div>
+            ) : (
+              <Badge className="bg-sky-500/15 text-sky-400 border-sky-500/30">Da giocare</Badge>
+            )}
+          </div>
+        </Card>
+      </button>
+    );
+  }
+
   return (
     <div>
       <SectionTitle
@@ -6337,7 +6444,7 @@ function MatchesSection({ season, updateSeason, showToast }) {
                 label="Azzera Partite"
                 confirmText="Eliminare tutte le partite, programmate e disputate?"
                 onConfirm={() => {
-                  updateSeason(() => ({ matches: [] }));
+                  updateSeason(() => ({ matches: [], tournaments: {} }));
                   showToast("Partite azzerate");
                 }}
               />
@@ -6402,58 +6509,87 @@ function MatchesSection({ season, updateSeason, showToast }) {
         <EmptyState icon={Trophy} text={`Nessuna partita ${filter === "Programmata" ? "programmata" : "disputata"}.`} />
       ) : (
         <div className="space-y-3">
-          {filtered.map((m) => {
-            const TypeIcon = MATCH_TYPE_ICONS[m.matchType] || Trophy;
+          {listItems.map((item) => {
+            if (item.type === "match") return renderMatchCard(item.match);
+            const isOpen = !!openTournaments[item.key];
+            const info = tournaments[item.key] || {};
+            const sortedT = [...item.matches].sort((a, b) => new Date(b.date) - new Date(a.date));
+            const goalMap = {};
+            const assistMap = {};
+            item.matches.forEach((m) => {
+              (m.scorers || []).forEach((sc) => { goalMap[sc.playerId] = (goalMap[sc.playerId] || 0) + (Number(sc.goals) || 0); });
+              (m.assists || []).forEach((sc) => { assistMap[sc.playerId] = (assistMap[sc.playerId] || 0) + (Number(sc.assists) || 0); });
+            });
+            const nameOf = (id) => players.find((p) => p.id === id)?.name || "—";
+            const goalList = Object.entries(goalMap).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+            const assistList = Object.entries(assistMap).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+            const dates = item.matches.map((m) => m.date).sort();
             return (
-              <button key={m.id} onClick={() => setSelected(m)} className="w-full text-left">
-                <Card
-                  className="p-4 hover:border-emerald-500/40 transition-colors"
-                  style={{ borderLeft: `4px solid ${MATCH_TYPE_BORDER[m.matchType] || "transparent"}` }}
-                >
-                  <div className="flex items-center justify-between gap-4 flex-wrap">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${m.homeAway === "Casa" ? "bg-emerald-500/15" : "bg-amber-500/15"}`}>
-                        <Flag className={`w-5 h-5 ${m.homeAway === "Casa" ? "text-emerald-400" : "text-amber-400"}`} />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <p className="text-sm font-bold text-slate-100">
-                            {season.teamName || "Squadra"} <span className="text-slate-500">vs</span> {m.opponent}
-                          </p>
-                          {m.matchType && (
-                            <Badge className={MATCH_TYPE_STYLES[m.matchType]}>
-                              <TypeIcon className="w-3 h-3" /> {m.matchType}
-                            </Badge>
-                          )}
-                          {m.coachNotes && (
-                            <span title="Presenti annotazioni del mister">
-                              <StickyNote className="w-3.5 h-3.5 text-amber-400" />
-                            </span>
-                          )}
+              <div key={item.key}>
+                <button onClick={() => setOpenTournaments((o) => ({ ...o, [item.key]: !o[item.key] }))} className="w-full text-left">
+                  <Card className="p-4 hover:border-amber-500/40 transition-colors" style={{ borderLeft: `4px solid ${MATCH_TYPE_BORDER["Torneo"] || "transparent"}` }}>
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <div className="flex items-center gap-3">
+                        <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 bg-amber-500/15">
+                          <Trophy className="w-5 h-5 text-amber-400" />
                         </div>
-                        <p className="text-xs text-slate-500">
-                          {formatDate(m.date)} · {m.time} · {m.homeAway}
-                          {m.matchType === "Torneo" && m.tournamentName ? ` · ${m.tournamentName}` : ""}
-                        </p>
+                        <div>
+                          <p className="text-sm font-bold text-slate-100">🏆 {item.name}</p>
+                          <p className="text-xs text-slate-500">
+                            {item.matches.length} partit{item.matches.length === 1 ? "a" : "e"} · {formatDate(dates[0])}
+                            {dates[dates.length - 1] !== dates[0] ? ` → ${formatDate(dates[dates.length - 1])}` : ""}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {info.placement && <Badge className="bg-amber-500/15 text-amber-300 border-amber-500/30">{info.placement}</Badge>}
+                        <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isOpen ? "rotate-180" : ""}`} />
                       </div>
                     </div>
-                    {m.status === "Disputata" && m.result ? (
-                      <div className="text-lg font-extrabold text-slate-100">
-                        {m.result.golFor} <span className="text-slate-600">-</span> {m.result.golAgainst}
+                  </Card>
+                </button>
+                {isOpen && (
+                  <div className="mt-2 ml-3 pl-3 border-l border-white/10 space-y-3">
+                    <Card className="p-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                        <div>
+                          <p className="text-[11px] uppercase tracking-wide text-slate-500">Squadra vincitrice</p>
+                          <p className="text-sm font-bold text-slate-100">{info.winner || "—"}</p>
+                        </div>
+                        <div>
+                          <p className="text-[11px] uppercase tracking-wide text-slate-500">Nostro piazzamento</p>
+                          <p className="text-sm font-bold text-slate-100">{info.placement || "—"}</p>
+                        </div>
                       </div>
-                    ) : (
-                      <Badge className="bg-sky-500/15 text-sky-400 border-sky-500/30">Da giocare</Badge>
-                    )}
+                      {!info.winner && !info.placement && (
+                        <p className="text-[11px] text-slate-500 mb-3">Inserisci piazzamento e vincitrice aprendo l'ultima partita disputata del torneo.</p>
+                      )}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">Goal</p>
+                          {goalList.length === 0 ? <p className="text-xs text-slate-600">Nessun marcatore</p> : goalList.map(([id, n]) => (
+                            <p key={id} className="text-sm text-slate-300">{nameOf(id)} <span className="font-bold text-emerald-400">{n}</span></p>
+                          ))}
+                        </div>
+                        <div>
+                          <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">Assist</p>
+                          {assistList.length === 0 ? <p className="text-xs text-slate-600">Nessun assist</p> : assistList.map(([id, n]) => (
+                            <p key={id} className="text-sm text-slate-300">{nameOf(id)} <span className="font-bold text-sky-400">{n}</span></p>
+                          ))}
+                        </div>
+                      </div>
+                    </Card>
+                    {sortedT.map((m) => renderMatchCard(m))}
                   </div>
-                </Card>
-              </button>
+                )}
+              </div>
             );
           })}
         </div>
       )}
 
       <Modal open={showAdd} onClose={() => setShowAdd(false)} title="Programma Partita" wide>
-        <MatchForm onSubmit={addMatch} onCancel={() => setShowAdd(false)} players={players} teamColors={{ primary: season.colorPrimary, secondary: season.colorSecondary }} teamName={season.teamName} />
+        <MatchForm onSubmit={addMatch} onCancel={() => setShowAdd(false)} tournamentNames={tournamentNames} players={players} teamColors={{ primary: season.colorPrimary, secondary: season.colorSecondary }} teamName={season.teamName} />
       </Modal>
 
       <Modal open={!!selected} onClose={() => setSelected(null)} title={selected ? `vs ${selected.opponent}` : ""} wide>
@@ -6466,6 +6602,16 @@ function MatchesSection({ season, updateSeason, showToast }) {
             lineup={season.lineup}
             clubLabel={season.teamName || ""}
             showToast={showToast}
+            tournamentNames={tournamentNames}
+            tournamentInfo={(() => {
+              const cur = matches.find((m) => m.id === selected.id) || selected;
+              const n = (cur.tournamentName || "").trim();
+              if (cur.matchType !== "Torneo" || !n || cur.status !== "Disputata") return null;
+              const played = matches.filter((m) => m.matchType === "Torneo" && m.status === "Disputata" && tKey(m.tournamentName) === tKey(n));
+              const last = [...played].sort((a, b) => (`${b.date} ${b.time || ""}`).localeCompare(`${a.date} ${a.time || ""}`))[0];
+              return { name: n, isLast: last?.id === cur.id, data: tournaments[tKey(n)] || {} };
+            })()}
+            onSaveTournament={saveTournamentOutcome}
             onUpdate={(patch) => {
               updateMatch(selected.id, patch);
               setSelected((prev) => ({ ...prev, ...patch }));
@@ -6590,8 +6736,9 @@ function ConvocazioniMatrix({ matches, players }) {
   );
 }
 
-function MatchForm({ onSubmit, onCancel, players, teamColors, teamName, initial }) {
+function MatchForm({ onSubmit, onCancel, players, teamColors, teamName, initial, tournamentNames = [] }) {
   const isEditing = !!initial;
+  const [newTournament, setNewTournament] = useState(tournamentNames.length === 0 || (!!initial && !!initial.tournamentName && !tournamentNames.some((n) => tKey(n) === tKey(initial.tournamentName))));
   const [form, setForm] = useState(
     initial || {
       opponent: "",
@@ -6647,12 +6794,38 @@ function MatchForm({ onSubmit, onCancel, players, teamColors, teamName, initial 
       </Field>
       {form.matchType === "Torneo" && (
         <Field label="Nome torneo">
-          <input
-            className={inputClass}
-            value={form.tournamentName}
-            onChange={(e) => setForm({ ...form, tournamentName: e.target.value })}
-            placeholder="Es. Torneo di Primavera"
-          />
+          {!newTournament ? (
+            <select
+              className={inputClass}
+              value={form.tournamentName}
+              onChange={(e) => {
+                if (e.target.value === "__new__") {
+                  setNewTournament(true);
+                  setForm({ ...form, tournamentName: "" });
+                } else setForm({ ...form, tournamentName: e.target.value });
+              }}
+            >
+              <option value="">Seleziona torneo…</option>
+              {tournamentNames.map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+              <option value="__new__">➕ Nuovo torneo…</option>
+            </select>
+          ) : (
+            <div>
+              <input
+                className={inputClass}
+                value={form.tournamentName}
+                onChange={(e) => setForm({ ...form, tournamentName: e.target.value })}
+                placeholder="Es. Torneo di Primavera"
+              />
+              {tournamentNames.length > 0 && (
+                <button type="button" onClick={() => { setNewTournament(false); setForm({ ...form, tournamentName: "" }); }} className="text-[11px] text-emerald-400 mt-1.5">
+                  ← Scegli tra i tornei esistenti
+                </button>
+              )}
+            </div>
+          )}
         </Field>
       )}
       <Field label="Casa / Trasferta">
@@ -6757,7 +6930,7 @@ function MatchForm({ onSubmit, onCancel, players, teamColors, teamName, initial 
   );
 }
 
-function MatchDetail({ match, players, onUpdate, onDelete, onClose, teamColors, lineup, clubLabel, teamName, showToast }) {
+function MatchDetail({ match, players, onUpdate, onDelete, onClose, teamColors, lineup, clubLabel, teamName, showToast, tournamentNames = [], tournamentInfo, onSaveTournament }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editing, setEditing] = useState(false);
   const [scorerError, setScorerError] = useState("");
@@ -6899,6 +7072,7 @@ function MatchDetail({ match, players, onUpdate, onDelete, onClose, teamColors, 
     return (
       <MatchForm
         initial={{ ...match }}
+        tournamentNames={tournamentNames}
         players={players}
         teamColors={teamColors}
         teamName={teamName}
@@ -7008,6 +7182,10 @@ function MatchDetail({ match, players, onUpdate, onDelete, onClose, teamColors, 
             <Button variant="danger" onClick={onDelete}>Elimina</Button>
           </div>
         </div>
+      )}
+
+      {isPlayed && tournamentInfo?.isLast && (
+        <TournamentOutcomeForm info={tournamentInfo} onSave={(data) => onSaveTournament?.(tournamentInfo.name, data)} />
       )}
 
       {!isPlayed ? (
