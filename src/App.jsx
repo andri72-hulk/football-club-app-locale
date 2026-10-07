@@ -1464,11 +1464,15 @@ function computePlayerStats(playerId, trainings, matches) {
   const giustificati = 0;
   const infortuni = t.filter((tr) => tr.attendance?.[playerId] === "Infortunato").length;
   const convocazioni = m.filter((match) => (match.convocati || []).includes(playerId)).length;
+  const convByType = (type) => m.filter((match) => match.matchType === type && (match.convocati || []).includes(playerId)).length;
+  const convAmichevoli = convByType("Amichevole");
+  const convTornei = convByType("Torneo");
+  const convCampionato = convByType("Campionato");
   const reti = m.reduce((sum, match) => sum + (match.scorers || []).filter((s) => s.playerId === playerId).reduce((a, s) => a + (Number(s.goals) || 0), 0), 0);
   const assist = m.reduce((sum, match) => sum + (match.assists || []).filter((s) => s.playerId === playerId).reduce((a, s) => a + (Number(s.assists) || 0), 0), 0);
   const ammonizioni = m.filter((match) => (match.yellowCards || []).includes(playerId)).length;
   const espulsioni = m.filter((match) => (match.redCards || []).includes(playerId)).length;
-  return { presenze, assenze, giustificati, infortuni, convocazioni, reti, assist, ammonizioni, espulsioni };
+  return { presenze, assenze, giustificati, infortuni, convocazioni, convAmichevoli, convTornei, convCampionato, reti, assist, ammonizioni, espulsioni };
 }
 
 function emptyCoachNotes() {
@@ -3708,6 +3712,9 @@ function PlayersBoard({ players, trainings, matches, onSelect }) {
               <span className="block">Allen.</span>
             </th>
             <th className="px-2 py-2.5 text-center bg-slate-900 leading-tight"><span className="block">Convo-</span><span className="block">cazioni</span></th>
+            <th className="px-2 py-2.5 text-center bg-sky-950 text-sky-300 leading-tight"><span className="block">Conv.</span><span className="block">Amichev.</span></th>
+            <th className="px-2 py-2.5 text-center bg-sky-950 text-sky-300 leading-tight"><span className="block">Conv.</span><span className="block">Tornei</span></th>
+            <th className="px-2 py-2.5 text-center bg-sky-950 text-sky-300 leading-tight"><span className="block">Conv.</span><span className="block">Campion.</span></th>
             <th className="px-2 py-2.5 text-center bg-slate-900">Reti</th>
             <th className="px-2 py-2.5 text-center bg-slate-900">Assist</th>
             <th className="px-2 py-2.5 text-center bg-slate-900 leading-tight"><span className="block">Amm.</span></th>
@@ -3733,6 +3740,9 @@ function PlayersBoard({ players, trainings, matches, onSelect }) {
                 <td className="px-2 py-2.5 text-center bg-rose-500/10 text-rose-400 font-bold">{s.assenze}</td>
                 <td className="px-2 py-2.5 text-center bg-rose-500/10 text-rose-400 font-bold">{s.infortuni}</td>
                 <td className="px-2 py-2.5 text-center text-sky-400">{s.convocazioni}</td>
+                <td className="px-2 py-2.5 text-center bg-sky-500/10 text-sky-300">{s.convAmichevoli}</td>
+                <td className="px-2 py-2.5 text-center bg-sky-500/10 text-sky-300">{s.convTornei}</td>
+                <td className="px-2 py-2.5 text-center bg-sky-500/10 text-sky-300">{s.convCampionato}</td>
                 <td className="px-2 py-2.5 text-center text-slate-200 font-semibold">{s.reti}</td>
                 <td className="px-2 py-2.5 text-center text-slate-200 font-semibold">{s.assist}</td>
                 <td className="px-2 py-2.5 text-center text-amber-400">{s.ammonizioni}</td>
