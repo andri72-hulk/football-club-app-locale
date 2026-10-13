@@ -2632,6 +2632,7 @@ export default function FootballClubApp() {
         {!activeSeason ? null : tab === "dashboard" ? (
           <Dashboard
             season={activeSeason}
+            library={library}
             onGoTo={setTab}
             onGoToPlayersBoard={() => {
               setPlayersView("board");
@@ -2847,7 +2848,7 @@ function SeasonSwitcher({ seasons, activeSeasonId, onSwitch, onCreate }) {
    DASHBOARD
    ============================================================ */
 
-function Dashboard({ season, onGoTo, onGoToPlayersBoard }) {
+function Dashboard({ season, library, onGoTo, onGoToPlayersBoard }) {
   const players = season.players || [];
   const trainings = [...(season.trainings || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
   const matches = [...(season.matches || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -2903,7 +2904,7 @@ function Dashboard({ season, onGoTo, onGoToPlayersBoard }) {
     .sort((a, b) => new Date(a.date) - new Date(b.date))
     .slice(0, 5);
 
-  const activeFormation = FORMATIONS.find((f) => f.id === season.lineup?.formationId);
+  const activeFormation = resolveAllFormations(library?.customFormations).find((f) => f.id === season.lineup?.formationId);
   const nextTrainingFocus = nextTraining ? (season.focusTecnici || []).find((f) => f.id === nextTraining.focusTecnicoId) : null;
 
   // Capocannoniere e miglior assistman della squadra
@@ -2930,23 +2931,35 @@ function Dashboard({ season, onGoTo, onGoToPlayersBoard }) {
     if (!champPhaseKey) return null;
     const phase = championship[champPhaseKey];
     const meta = CHAMPIONSHIP_PHASE_META[champPhaseKey];
+    // Ultima partita disputata dalla nostra squadra
+    const usIds = (phase.teams || []).filter((t) => t.isUs).map((t) => t.id);
+    const lastM = [...(phase.matches || [])]
+      .filter((m) => m.played && (usIds.includes(m.homeTeamId) || usIds.includes(m.awayTeamId)))
+      .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+    let lastResult = null;
+    if (lastM) {
+      const usHome = usIds.includes(lastM.homeTeamId);
+      const opp = (phase.teams || []).find((t) => t.id === (usHome ? lastM.awayTeamId : lastM.homeTeamId));
+      lastResult = {
+        usGoals: usHome ? lastM.homeGoals : lastM.awayGoals,
+        oppGoals: usHome ? lastM.awayGoals : lastM.homeGoals,
+        opponentName: opp?.name || "?",
+        date: lastM.date,
+      };
+    }
     if (champPhaseKey === "faseFinale") {
-      const played = [...(phase.matches || [])].filter((m) => m.played).sort((a, b) => new Date(b.date) - new Date(a.date));
-      const last = played[0];
-      if (!last) return { meta, noData: true };
-      const home = phase.teams.find((t) => t.id === last.homeTeamId);
-      const away = phase.teams.find((t) => t.id === last.awayTeamId);
-      const usHome = home?.isUs;
-      const opponent = usHome ? away : home;
-      const usGoals = usHome ? last.homeGoals : last.awayGoals;
-      const oppGoals = usHome ? last.awayGoals : last.homeGoals;
-      return { meta, lastResult: { usGoals, oppGoals, opponentName: opponent?.name || "?" } };
+      if (!lastResult) return { meta, noData: true };
+      return { meta, lastResult };
     }
     const standings = computeStandings(phase.teams, phase.matches);
     const position = standings.findIndex((t) => t.isUs) + 1;
     const us = standings.find((t) => t.isUs);
     if (!position) return { meta, noData: true };
-    return { meta, position, points: us?.pts ?? 0 };
+    // Zoom: la nostra squadra con quella sopra e quella sotto (finestra di 3 righe)
+    let startIdx = Math.max(0, position - 2);
+    startIdx = Math.min(startIdx, Math.max(0, standings.length - 3));
+    const zoom = standings.slice(startIdx, startIdx + 3).map((t, i) => ({ pos: startIdx + i + 1, name: t.name, pts: t.pts, played: t.played, isUs: t.isUs }));
+    return { meta, position, points: us?.pts ?? 0, lastResult, zoom };
   }, [championship, champPhaseKey]);
 
   return (
@@ -2964,14 +2977,25 @@ function Dashboard({ season, onGoTo, onGoToPlayersBoard }) {
           accent="amber"
           onClick={() => onGoTo("matches")}
         />
-        <KpiCard
-          icon={LayoutGrid}
-          label="Modulo attivo"
-          value={activeFormation ? activeFormation.name : "—"}
-          subtext={activeFormation ? activeFormation.subtitle : "Nessuno selezionato"}
-          accent="rose"
-          onClick={() => onGoTo("formations")}
-        />
+        <button onClick={() => onGoTo("formations")} className="text-left">
+          <Card className="p-4 hover:border-white/20 transition-colors h-full">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center mb-3 bg-rose-500/15 text-rose-400">
+                  <LayoutGrid className="w-4.5 h-4.5" />
+                </div>
+                <div className="text-2xl font-extrabold text-slate-100 truncate">{activeFormation ? activeFormation.name : "—"}</div>
+                <p className="text-xs text-slate-500 mt-0.5">Modulo attivo</p>
+                <p className="text-[11px] mt-1 text-slate-600">{activeFormation ? activeFormation.subtitle : "Nessuno selezionato"}</p>
+              </div>
+              {activeFormation && (
+                <div className="shrink-0" style={{ width: 96 }}>
+                  <FormationMini formation={activeFormation} />
+                </div>
+              )}
+            </div>
+          </Card>
+        </button>
         <KpiCard
           icon={Target}
           label="Capocannoniere ed Assist"
@@ -2989,32 +3013,48 @@ function Dashboard({ season, onGoTo, onGoToPlayersBoard }) {
           accent="emerald"
           onClick={onGoToPlayersBoard}
         />
-        <KpiCard
-          icon={Award}
-          label={champBox ? `Campionato — ${champBox.meta.label}` : "Campionato"}
-          value={
-            !champBox
-              ? "—"
-              : champBox.noData
-              ? "—"
-              : champPhaseKey === "faseFinale"
-              ? `${champBox.lastResult.usGoals} - ${champBox.lastResult.oppGoals}`
-              : `${champBox.position}°`
-          }
-          subtext={
-            !champBox
-              ? "Nessuna fase creata"
-              : champBox.noData
-              ? champPhaseKey === "faseFinale"
-                ? "Nessun risultato ancora"
-                : "Nessuna partita disputata"
-              : champPhaseKey === "faseFinale"
-              ? `vs ${champBox.lastResult.opponentName}`
-              : `${champBox.points} punti in classifica`
-          }
-          accent="sky"
-          onClick={() => onGoTo("championship")}
-        />
+        <button onClick={() => onGoTo("championship")} className="text-left">
+          <Card className="p-4 hover:border-white/20 transition-colors h-full">
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center mb-3 bg-sky-500/15 text-sky-400">
+              <Award className="w-4.5 h-4.5" />
+            </div>
+            <p className="text-xs text-slate-500 mb-2">{champBox ? `Campionato — ${champBox.meta.label}` : "Campionato"}</p>
+            {!champBox ? (
+              <p className="text-sm text-slate-500">Nessuna fase creata</p>
+            ) : (
+              <>
+                {champBox.lastResult ? (
+                  <div className="mb-2">
+                    <p className="text-[10px] uppercase tracking-wide text-slate-500">Ultima partita</p>
+                    <p className="text-sm font-bold text-slate-100">
+                      <span className="text-xl font-extrabold">{champBox.lastResult.usGoals} - {champBox.lastResult.oppGoals}</span>{" "}
+                      <span className="text-slate-400 font-medium">vs {champBox.lastResult.opponentName}</span>
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500 mb-2">Nessun risultato ancora</p>
+                )}
+                {champBox.zoom && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Classifica</p>
+                    <div className="rounded-lg border border-white/10 overflow-hidden">
+                      {champBox.zoom.map((r) => (
+                        <div
+                          key={r.pos}
+                          className={`flex items-center gap-2 px-2 py-1 text-xs ${r.isUs ? "bg-sky-500/20 text-sky-200 font-bold" : "text-slate-400"}`}
+                        >
+                          <span className="w-5 text-right">{r.pos}°</span>
+                          <span className="flex-1 truncate">{r.name}</span>
+                          <span className="font-semibold">{r.pts} pt</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </Card>
+        </button>
       </div>
 
       {/* NEXT EVENTS */}
@@ -3142,6 +3182,24 @@ function Dashboard({ season, onGoTo, onGoToPlayersBoard }) {
           </div>
         )}
       </Card>
+    </div>
+  );
+}
+
+// Mini campo con lo schema del modulo: solo sigle dei ruoli, nessun giocatore
+function FormationMini({ formation }) {
+  return (
+    <div className="relative w-full rounded-lg overflow-hidden border border-white/10" style={{ aspectRatio: "68 / 100" }}>
+      <PitchBackground />
+      {formation.positions.map((pos) => (
+        <div
+          key={pos.id}
+          style={{ left: `${pos.x}%`, top: `${pos.y}%`, width: 20, height: 20 }}
+          className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-950/70 border border-emerald-400 flex items-center justify-center text-white font-bold"
+        >
+          <span style={{ fontSize: 7, lineHeight: 1 }}>{pos.label}</span>
+        </div>
+      ))}
     </div>
   );
 }
