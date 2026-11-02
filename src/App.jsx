@@ -8774,41 +8774,61 @@ function ChampionshipSection({ season, updateSeason, showToast }) {
             <EmptyState icon={Trophy} text={phase.teams.length < 2 ? "Aggiungi almeno 2 squadre per poter inserire le partite." : "Nessuna partita inserita ancora."} />
           ) : (
             <div className="space-y-2">
-              {sortedMatches.map((m) => {
-                const home = teamById(m.homeTeamId);
-                const away = teamById(m.awayTeamId);
-                const usInvolved = home?.isUs || away?.isUs;
+              {(() => {
+                const rounds = [...new Set(sortedMatches.filter((m) => Number(m.round) > 0).map((m) => Number(m.round)))].sort((x, y) => y - x);
+                const noRound = sortedMatches.filter((m) => !(Number(m.round) > 0));
+                const renderRow = (m) => {
+                  const home = teamById(m.homeTeamId);
+                  const away = teamById(m.awayTeamId);
+                  const usInvolved = home?.isUs || away?.isUs;
+                  return (
+                    <button
+                      key={m.id}
+                      onClick={() => {
+                        setEditingMatch(m);
+                        setShowMatchForm(true);
+                      }}
+                      className="w-full text-left"
+                    >
+                      <Card className={`p-3 hover:border-emerald-500/40 transition-colors ${usInvolved ? "border-emerald-500/20" : ""}`}>
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <ColorPair primary={home?.colorPrimary} secondary={home?.colorSecondary} size={14} />
+                            <span className={`text-sm truncate ${home?.isUs ? "font-bold text-emerald-400" : "text-slate-200"}`}>{home?.name || "?"}</span>
+                            <span className="text-slate-600 text-xs">vs</span>
+                            <span className={`text-sm truncate ${away?.isUs ? "font-bold text-emerald-400" : "text-slate-200"}`}>{away?.name || "?"}</span>
+                            <ColorPair primary={away?.colorPrimary} secondary={away?.colorSecondary} size={14} />
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <span className="text-[11px] text-slate-500">{formatDate(m.date)}</span>
+                            {m.played ? (
+                              <span className="text-base font-extrabold text-slate-100">{m.homeGoals} - {m.awayGoals}</span>
+                            ) : (
+                              <Badge className="bg-sky-500/15 text-sky-400 border-sky-500/30">Da giocare</Badge>
+                            )}
+                          </div>
+                        </div>
+                      </Card>
+                    </button>
+                  );
+                };
                 return (
-                  <button
-                    key={m.id}
-                    onClick={() => {
-                      setEditingMatch(m);
-                      setShowMatchForm(true);
-                    }}
-                    className="w-full text-left"
-                  >
-                    <Card className={`p-3 hover:border-emerald-500/40 transition-colors ${usInvolved ? "border-emerald-500/20" : ""}`}>
-                      <div className="flex items-center justify-between gap-3 flex-wrap">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <ColorPair primary={home?.colorPrimary} secondary={home?.colorSecondary} size={14} />
-                          <span className={`text-sm truncate ${home?.isUs ? "font-bold text-emerald-400" : "text-slate-200"}`}>{home?.name || "?"}</span>
-                          <span className="text-slate-600 text-xs">vs</span>
-                          <span className={`text-sm truncate ${away?.isUs ? "font-bold text-emerald-400" : "text-slate-200"}`}>{away?.name || "?"}</span>
-                          <ColorPair primary={away?.colorPrimary} secondary={away?.colorSecondary} size={14} />
-                        </div>
-                        <div className="flex items-center gap-3 shrink-0">
-                          <span className="text-[11px] text-slate-500">{formatDate(m.date)}</span>
-                          {m.played ? (
-                            <span className="text-base font-extrabold text-slate-100">{m.homeGoals} - {m.awayGoals}</span>
-                          ) : (
-                            <Badge className="bg-sky-500/15 text-sky-400 border-sky-500/30">Da giocare</Badge>
-                          )}
-                        </div>
+                  <>
+                    {rounds.map((r) => (
+                      <div key={`r${r}`} className="space-y-2">
+                        <p className="text-[11px] font-semibold uppercase tracking-widest text-emerald-400 pt-1">Giornata {r}</p>
+                        {sortedMatches.filter((m) => Number(m.round) === r).map(renderRow)}
                       </div>
-                    </Card>
-                  </button>
+                    ))}
+                    {noRound.length > 0 && (
+                      <div className="space-y-2">
+                        {rounds.length > 0 && <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500 pt-1">Senza giornata</p>}
+                        {noRound.map(renderRow)}
+                      </div>
+                    )}
+                  </>
                 );
-              })}
+              })()}
             </div>
           )}
         </div>
@@ -8841,7 +8861,7 @@ function ChampionshipSection({ season, updateSeason, showToast }) {
                         <ColorPair primary={opp?.colorPrimary} secondary={opp?.colorSecondary} size={14} />
                         <span className="text-sm text-slate-200 truncate">{isHome ? "vs" : "@"} {opp?.name || "?"}</span>
                       </div>
-                      <p className="text-[11px] text-slate-500">{formatDate(m.date)} · {isHome ? "Casa" : "Trasferta"}</p>
+                      <p className="text-[11px] text-slate-500">{Number(m.round) > 0 ? `G${m.round} · ` : ""}{formatDate(m.date)} · {isHome ? "Casa" : "Trasferta"}</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       {m.played ? (
@@ -8918,6 +8938,7 @@ function ChampionshipMatchForm({ teams, initial, onSubmit, onCancel, onDelete, r
     initial || {
       homeTeamId: teams[0]?.id || "",
       awayTeamId: teams[1]?.id || "",
+      round: "",
       date: todayISO(),
       played: false,
       homeGoals: 0,
@@ -8951,9 +8972,9 @@ function ChampionshipMatchForm({ teams, initial, onSubmit, onCancel, onDelete, r
 
     // "golFor" nella partita reale è sempre riferito alla nostra squadra
     if (usIsHome) {
-      setForm({ ...form, awayTeamId: matchedTeam.id, played: true, homeGoals: rm.result.golFor, awayGoals: rm.result.golAgainst });
+      setForm({ ...form, awayTeamId: matchedTeam.id, played: true, homeGoals: rm.result.golFor, awayGoals: rm.result.golAgainst, round: rm.round ?? form.round ?? "" });
     } else if (usIsAway) {
-      setForm({ ...form, homeTeamId: matchedTeam.id, played: true, awayGoals: rm.result.golFor, homeGoals: rm.result.golAgainst });
+      setForm({ ...form, homeTeamId: matchedTeam.id, played: true, awayGoals: rm.result.golFor, homeGoals: rm.result.golAgainst, round: rm.round ?? form.round ?? "" });
     }
   }
 
@@ -8994,6 +9015,17 @@ function ChampionshipMatchForm({ teams, initial, onSubmit, onCancel, onDelete, r
           )}
         </Field>
       )}
+
+      <Field label="Giornata">
+        <input
+          type="number"
+          min="1"
+          className={inputClass}
+          value={form.round ?? ""}
+          onChange={(e) => setForm({ ...form, round: e.target.value === "" ? "" : Math.max(1, parseInt(e.target.value, 10) || 1) })}
+          placeholder="Es. 5"
+        />
+      </Field>
 
       <div className="flex items-center gap-2 mb-2">
         <input
