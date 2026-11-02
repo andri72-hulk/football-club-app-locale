@@ -6380,16 +6380,25 @@ function MatchesSection({ season, updateSeason, showToast }) {
     if (m.status === "Programmata" && m.matchType === "Torneo" && n && !tournamentNames.some((x) => tKey(x) === tKey(n))) tournamentNames.push(n);
   });
 
-  // Elenco disputate: i tornei con lo stesso nome vengono raccolti in un unico gruppo
+  // Elenco: tornei con lo stesso nome raccolti in un unico gruppo (solo disputate);
+  // partite di campionato con giornata raccolte per giornata (programmate e disputate)
   const listItems = [];
-  if (filter === "Disputata") {
+  {
     const groups = {};
     filtered.forEach((m) => {
       const n = (m.tournamentName || "").trim();
-      if (m.matchType === "Torneo" && n) {
+      const round = Number(m.round);
+      if (filter === "Disputata" && m.matchType === "Torneo" && n) {
         const k = tKey(n);
         if (!groups[k]) {
           groups[k] = { type: "tournament", key: k, name: n, matches: [] };
+          listItems.push(groups[k]);
+        }
+        groups[k].matches.push(m);
+      } else if (m.matchType === "Campionato" && round > 0) {
+        const k = `round-${round}`;
+        if (!groups[k]) {
+          groups[k] = { type: "round", key: k, round, matches: [] };
           listItems.push(groups[k]);
         }
         groups[k].matches.push(m);
@@ -6397,8 +6406,10 @@ function MatchesSection({ season, updateSeason, showToast }) {
         listItems.push({ type: "match", match: m });
       }
     });
-  } else {
-    filtered.forEach((m) => listItems.push({ type: "match", match: m }));
+    // Le giornate occupano le proprie posizioni ma vengono ordinate per numero di giornata (decrescente)
+    const roundSlots = listItems.map((it, i) => (it.type === "round" ? i : -1)).filter((i) => i >= 0);
+    const sortedRounds = roundSlots.map((i) => listItems[i]).sort((x, y) => y.round - x.round);
+    roundSlots.forEach((slot, idx) => { listItems[slot] = sortedRounds[idx]; });
   }
 
   function saveTournamentOutcome(name, data) {
@@ -6470,6 +6481,7 @@ function MatchesSection({ season, updateSeason, showToast }) {
                 <p className="text-xs text-slate-500">
                   {formatDate(m.date)} · {m.time} · {m.homeAway}
                   {m.matchType === "Torneo" && m.tournamentName ? ` · ${m.tournamentName}` : ""}
+                  {m.matchType === "Campionato" && Number(m.round) > 0 ? ` · Giornata ${m.round}` : ""}
                 </p>
               </div>
             </div>
@@ -6569,6 +6581,14 @@ function MatchesSection({ season, updateSeason, showToast }) {
         <div className="space-y-3">
           {listItems.map((item) => {
             if (item.type === "match") return renderMatchCard(item.match);
+            if (item.type === "round") {
+              return (
+                <div key={item.key}>
+                  <p className="text-[11px] font-semibold uppercase tracking-widest text-emerald-400 mb-1.5 mt-1">Giornata {item.round}</p>
+                  <div className="space-y-3">{item.matches.map((m) => renderMatchCard(m))}</div>
+                </div>
+              );
+            }
             const isOpen = !!openTournaments[item.key];
             const info = tournaments[item.key] || {};
             const sortedT = [...item.matches].sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -6806,6 +6826,7 @@ function MatchForm({ onSubmit, onCancel, players, teamColors, teamName, initial,
       homeAway: "Casa",
       venue: "",
       matchType: "Campionato",
+      round: "",
       tournamentName: "",
       opponentColorPrimary: "#dc2626",
       opponentColorSecondary: "#0f172a",
@@ -6851,6 +6872,18 @@ function MatchForm({ onSubmit, onCancel, players, teamColors, teamName, initial,
           })}
         </div>
       </Field>
+      {form.matchType === "Campionato" && (
+        <Field label="Giornata">
+          <input
+            type="number"
+            min="1"
+            className={inputClass}
+            value={form.round ?? ""}
+            onChange={(e) => setForm({ ...form, round: e.target.value === "" ? "" : Math.max(1, parseInt(e.target.value, 10) || 1) })}
+            placeholder="Es. 5"
+          />
+        </Field>
+      )}
       {form.matchType === "Torneo" && (
         <Field label="Nome torneo">
           {!newTournament ? (
@@ -7196,11 +7229,9 @@ function MatchDetail({ match, players, onUpdate, onDelete, onClose, teamColors, 
           <button onClick={handlePrintConvocation} className="rounded-lg p-2 hover:bg-white/10 text-slate-400" title={isPlayed ? "Scarica risultato e convocati" : "Scarica modulo e convocazione (2 pagine)"}>
             <Download className="w-4 h-4" />
           </button>
-          {!isPlayed && (
-            <button onClick={() => setEditing(true)} className="rounded-lg p-2 hover:bg-white/10 text-slate-400" title="Modifica dati e convocati">
-              <Edit2 className="w-4 h-4" />
-            </button>
-          )}
+          <button onClick={() => setEditing(true)} className="rounded-lg p-2 hover:bg-white/10 text-slate-400" title="Modifica dati (giornata, data, tipo, convocati…)">
+            <Edit2 className="w-4 h-4" />
+          </button>
           <button onClick={() => setConfirmDelete(true)} className="rounded-lg p-2 hover:bg-rose-500/10 text-rose-400" title="Elimina">
             <Trash2 className="w-4 h-4" />
           </button>
@@ -8389,6 +8420,7 @@ function ChampionshipSection({ season, updateSeason, showToast }) {
   const [confirmDeleteMatchId, setConfirmDeleteMatchId] = useState(null);
   const [confirmClosePhase, setConfirmClosePhase] = useState(false);
   const [confirmReopenPhase, setConfirmReopenPhase] = useState(false);
+  const [teamDetailId, setTeamDetailId] = useState(null);
 
   const phase = championship[activeTab];
 
@@ -8634,7 +8666,12 @@ function ChampionshipSection({ season, updateSeason, showToast }) {
                   </thead>
                   <tbody>
                     {standings.map((t, i) => (
-                      <tr key={t.id} className={`border-t border-white/5 ${t.isUs ? "bg-emerald-500/10" : ""}`}>
+                      <tr
+                        key={t.id}
+                        onClick={() => setTeamDetailId(t.id)}
+                        title="Mostra partite e risultati"
+                        className={`border-t border-white/5 cursor-pointer hover:bg-white/5 ${t.isUs ? "bg-emerald-500/10" : ""}`}
+                      >
                         <td className="py-1.5 pr-2 text-slate-500">{i + 1}</td>
                         <td className="py-1.5 pr-2">
                           <div className="flex items-center gap-2">
@@ -8776,6 +8813,53 @@ function ChampionshipSection({ season, updateSeason, showToast }) {
           )}
         </div>
       )}
+
+      <Modal
+        open={!!teamDetailId}
+        onClose={() => setTeamDetailId(null)}
+        title={teamDetailId ? `Partite — ${teamById(teamDetailId)?.name || ""}` : ""}
+      >
+        {teamDetailId && phase && (() => {
+          const team = teamById(teamDetailId);
+          const teamMatches = [...phase.matches]
+            .filter((m) => m.homeTeamId === teamDetailId || m.awayTeamId === teamDetailId)
+            .sort((a, b) => new Date(a.date) - new Date(b.date));
+          if (teamMatches.length === 0) return <EmptyState icon={Trophy} text="Nessuna partita inserita per questa squadra." />;
+          return (
+            <div className="space-y-2">
+              {teamMatches.map((m) => {
+                const isHome = m.homeTeamId === teamDetailId;
+                const opp = teamById(isHome ? m.awayTeamId : m.homeTeamId);
+                const gf = isHome ? m.homeGoals : m.awayGoals;
+                const ga = isHome ? m.awayGoals : m.homeGoals;
+                const outcome = !m.played ? null : gf > ga ? "V" : gf < ga ? "P" : "N";
+                const outcomeStyle = { V: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30", N: "bg-amber-500/15 text-amber-400 border-amber-500/30", P: "bg-rose-500/15 text-rose-400 border-rose-500/30" };
+                return (
+                  <div key={m.id} className="flex items-center justify-between gap-3 rounded-xl border border-white/10 p-2.5">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <ColorPair primary={opp?.colorPrimary} secondary={opp?.colorSecondary} size={14} />
+                        <span className="text-sm text-slate-200 truncate">{isHome ? "vs" : "@"} {opp?.name || "?"}</span>
+                      </div>
+                      <p className="text-[11px] text-slate-500">{formatDate(m.date)} · {isHome ? "Casa" : "Trasferta"}</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {m.played ? (
+                        <>
+                          <span className="text-base font-extrabold text-slate-100">{gf} - {ga}</span>
+                          <Badge className={outcomeStyle[outcome]}>{outcome}</Badge>
+                        </>
+                      ) : (
+                        <Badge className="bg-sky-500/15 text-sky-400 border-sky-500/30">Da giocare</Badge>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+      </Modal>
 
       <Modal
         open={showTeamForm}
